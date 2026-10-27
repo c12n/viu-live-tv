@@ -92,7 +92,7 @@ struct ChannelRowView: View {
             Button { onPlay() } label: { Label("Play", systemImage: "play.fill") }
             Button { onToggleFavorite() } label: {
                 Label(isFavorite ? "Remove Favorite" : "Favorite",
-                      systemImage: isFavorite ? "star.slash" : "star")
+                      systemImage: isFavorite ? "heart.slash" : "heart")
             }
             Button { onOpenExternal() } label: {
                 Label("Open in External Player", systemImage: "arrow.up.forward.app")
@@ -101,7 +101,7 @@ struct ChannelRowView: View {
     }
 
     private var starImage: some View {
-        Image(systemName: isFavorite ? "star.fill" : "star")
+        Image(systemName: isFavorite ? "heart.fill" : "heart")
             .foregroundStyle(isFavorite ? .yellow : .secondary)
             .font(.body)
             .contentShape(Rectangle())

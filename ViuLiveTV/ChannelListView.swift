@@ -104,7 +104,7 @@ struct ChannelListView: View {
                 if visibleChannels.isEmpty {
                     ContentUnavailableView(
                         tab == .favorites ? "No Favorites Yet" : "No Channels",
-                        systemImage: tab == .favorites ? "star" : "tv",
+                        systemImage: tab == .favorites ? "heart" : "tv",
                         description: Text(tab == .favorites
                             ? "Tap the star on any channel to add it here."
                             : "Try refreshing or adjusting your search.")
@@ -121,7 +121,7 @@ struct ChannelListView: View {
                                     favorites.toggle(channel)
                                 } label: {
                                     Label(isFav ? "Unfavorite" : "Favorite",
-                                          systemImage: isFav ? "star.slash" : "star.fill")
+                                          systemImage: isFav ? "heart.slash" : "heart.fill")
                                 }
                                 .tint(isFav ? .orange : .yellow)
                             }
@@ -330,7 +330,7 @@ struct ChannelListView: View {
                     Haptics.medium()
                     favorites.toggle(channel)
                 } label: {
-                    Image(systemName: favorites.isFavorite(channel.streamId) ? "star.fill" : "star")
+                    Image(systemName: favorites.isFavorite(channel.streamId) ? "heart.fill" : "heart")
                         .foregroundStyle(favorites.isFavorite(channel.streamId) ? Color.yellow : Color.secondary)
                         .font(.body)
                         .frame(width: 44, height: 44)

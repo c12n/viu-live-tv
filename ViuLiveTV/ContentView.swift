@@ -141,7 +141,7 @@ struct FloatingTabBar: View {
     var body: some View {
         HStack(spacing: 4) {
             item(.all, icon: "play.tv.fill", label: "Channels")
-            item(.favorites, icon: "star.fill", label: "Favorites")
+            item(.favorites, icon: "heart.fill", label: "Favorites")
             Button(action: onSettings) {
                 VStack(spacing: 2) {
                     Image(systemName: "gearshape.fill")
