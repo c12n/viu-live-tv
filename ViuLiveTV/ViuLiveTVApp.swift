@@ -22,13 +22,27 @@ struct ViuLiveTVApp: App {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
     }
 
+    /// CI harness: VIU_PLAYBACK_TEST=1 swaps in the playback test screen
+    /// (see PlaybackTestView). Never set in normal use.
+    private var playbackTestMode: Bool {
+        ProcessInfo.processInfo.environment["VIU_PLAYBACK_TEST"] == "1"
+    }
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(auth)
-                .environment(epg)
-                .environment(favorites)
-                .environment(settings)
+            if playbackTestMode {
+                PlaybackTestView()
+                    .environment(auth)
+                    .environment(epg)
+                    .environment(favorites)
+                    .environment(settings)
+            } else {
+                ContentView()
+                    .environment(auth)
+                    .environment(epg)
+                    .environment(favorites)
+                    .environment(settings)
+            }
         }
     }
 }

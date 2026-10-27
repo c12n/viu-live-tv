@@ -11,6 +11,11 @@ import SwiftUI
 import UIKit
 import AVKit
 import AVFoundation
+import OSLog
+
+/// Playback lifecycle log — visible in Console and in the CI simulator
+/// test's captured logs (used to prove real playback end to end).
+let viuPlaybackLog = Logger(subsystem: "com.c12n.viulivetv", category: "playback")
 
 // MARK: - Player model
 
@@ -61,6 +66,7 @@ final class PlayerModel {
             playbackError = nil
             linkGeneration += 1
             isLoading = false
+            viuPlaybackLog.info("VIU_PLAYBACK link ok stream=\(channel.streamId, privacy: .public) host=\(url.host ?? "?", privacy: .public)")
             // Fire-and-forget history ping.
             await APIClient.shared.reportHistory(streamID: channel.streamId,
                                                  streamName: displayName,
@@ -68,6 +74,7 @@ final class PlayerModel {
         } catch {
             isLoading = false
             errorMessage = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            viuPlaybackLog.error("VIU_PLAYBACK link failed stream=\(channel.streamId, privacy: .public): \(errorMessage ?? "?", privacy: .public)")
         }
     }
 
@@ -278,6 +285,15 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         }
 
         context.coordinator.observe(item: item)
+        // Heartbeat for the playback log: proves time actually advances.
+        let token = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 2, preferredTimescale: 600),
+            queue: .main
+        ) { time in
+            viuPlaybackLog.info("VIU_PLAYBACK t=\(time.seconds, privacy: .public) rate=\(player.rate, privacy: .public) timeControl=\(player.timeControlStatus.rawValue, privacy: .public)")
+        }
+        context.coordinator.timeObserverToken = token
+        context.coordinator.observedPlayer = player
         player.play()
         return vc
     }
@@ -295,6 +311,10 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
     }
 
     static func dismantleUIViewController(_ uiViewController: AVPlayerViewController, coordinator: Coordinator) {
+        if let token = coordinator.timeObserverToken, let player = coordinator.observedPlayer {
+            player.removeTimeObserver(token)
+        }
+        coordinator.timeObserverToken = nil
         uiViewController.player?.pause()
         uiViewController.player = nil
         coordinator.invalidate()
@@ -305,6 +325,8 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         private let onPlaybackError: ((String) -> Void)?
         private var reported = false
         var lastGeneration = 0
+        var timeObserverToken: Any?
+        weak var observedPlayer: AVPlayer?
 
         init(onPlaybackError: ((String) -> Void)?) {
             self.onPlaybackError = onPlaybackError
@@ -315,9 +337,17 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
             reported = false
             statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
                 guard let self else { return }
-                if item.status == .failed, !self.reported {
-                    self.reported = true
-                    self.onPlaybackError?(Self.describe(item.error))
+                switch item.status {
+                case .readyToPlay:
+                    viuPlaybackLog.info("VIU_PLAYBACK item readyToPlay")
+                case .failed:
+                    viuPlaybackLog.error("VIU_PLAYBACK item failed: \(Self.describe(item.error), privacy: .public)")
+                    if !self.reported {
+                        self.reported = true
+                        self.onPlaybackError?(Self.describe(item.error))
+                    }
+                default:
+                    break
                 }
             }
         }
@@ -342,6 +372,57 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         // Keep playback going when PiP starts from inline.
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                   willBeginFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator) {}
+    }
+}
+
+// MARK: - CI playback test (env-gated)
+//
+// Shown instead of the normal UI when the app is launched with
+// VIU_PLAYBACK_TEST=1 (the simulator CI does this with a session token in
+// VIU_TEST_TOKEN). Signs in with the token, loads the real channel guide,
+// then opens VIU_TEST_STREAM (default 4626) in the native player, logging
+// VIU_PLAYBACK lines the whole way so the test can verify real playback.
+// Inert in normal use: the env vars can only be set by the developer /
+// simctl, never by another app on a real device.
+
+struct PlaybackTestView: View {
+    @Environment(AuthViewModel.self) private var auth
+    @Environment(EPGStore.self) private var epg
+    @State private var channel: EPGChannel?
+    @State private var phase = "Starting playback test…"
+
+    private var env: [String: String] { ProcessInfo.processInfo.environment }
+
+    var body: some View {
+        NavigationStack {
+            if let channel {
+                PlayerView(channel: channel)
+            } else {
+                VStack(spacing: 12) {
+                    ProgressView().controlSize(.large)
+                    Text(phase)
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+            }
+        }
+        .task {
+            viuPlaybackLog.info("VIU_PLAYBACK test view start")
+            if let token = env["VIU_TEST_TOKEN"], !token.isEmpty {
+                await auth.useToken(token)
+                viuPlaybackLog.info("VIU_PLAYBACK auth state=\(String(describing: auth.state), privacy: .public)")
+            }
+            phase = "Loading channels…"
+            await epg.refresh()
+            viuPlaybackLog.info("VIU_PLAYBACK channels=\(epg.channels.count, privacy: .public) state=\(String(describing: epg.state), privacy: .public)")
+            let sid = Int(env["VIU_TEST_STREAM"] ?? "") ?? 4626
+            channel = epg.channel(for: sid)
+                ?? EPGChannel(num: nil, name: "Playback Test", streamType: "live",
+                              streamId: sid, streamIcon: nil, epgChannelId: nil,
+                              categoryId: nil)
+            viuPlaybackLog.info("VIU_PLAYBACK opening player stream=\(sid, privacy: .public)")
+        }
     }
 }
 

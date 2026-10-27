@@ -353,6 +353,71 @@ struct EPGTag: Decodable, Identifiable, Hashable {
     }
 }
 
+// MARK: - Encodable conformances (for the EPG disk cache)
+//
+// The decoders above are deliberately lenient (flexible keys and types).
+// These encoders write the canonical keys those decoders accept, so a
+// cached payload round-trips through the same decode path.
+
+extension EPGProgramme: Encodable {
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(description, forKey: .description)
+        try c.encodeIfPresent(rawStart, forKey: .timestart)
+        try c.encodeIfPresent(rawEnd, forKey: .timeend)
+        try c.encodeIfPresent(timezone, forKey: .timezone)
+    }
+}
+
+extension EPGChannel: Encodable {
+    private enum EncodeKeys: String, CodingKey {
+        case num, name, tags, schedule, added
+        case streamType = "stream_type"
+        case streamId = "stream_id"
+        case streamIcon = "stream_icon"
+        case epgChannelId = "epg_channel_id"
+        case categoryId = "category_id"
+        case customSid = "custom_sid"
+        case tvArchive = "tv_archive"
+        case directSource = "direct_source"
+        case tvArchiveDuration = "tv_archive_duration"
+        case currentShow = "current_show"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: EncodeKeys.self)
+        try c.encodeIfPresent(num, forKey: .num)
+        try c.encode(name, forKey: .name)
+        try c.encodeIfPresent(streamType, forKey: .streamType)
+        try c.encode(streamId, forKey: .streamId)
+        try c.encodeIfPresent(streamIcon, forKey: .streamIcon)
+        try c.encodeIfPresent(epgChannelId, forKey: .epgChannelId)
+        try c.encodeIfPresent(added, forKey: .added)
+        try c.encodeIfPresent(categoryId, forKey: .categoryId)
+        try c.encodeIfPresent(customSid, forKey: .customSid)
+        try c.encodeIfPresent(tvArchive, forKey: .tvArchive)
+        try c.encodeIfPresent(directSource, forKey: .directSource)
+        try c.encodeIfPresent(tvArchiveDuration, forKey: .tvArchiveDuration)
+        try c.encode(schedule, forKey: .schedule)
+        try c.encodeIfPresent(currentShow, forKey: .currentShow)
+        try c.encodeIfPresent(tags, forKey: .tags)
+    }
+}
+
+extension EPGTag: Encodable {
+    private enum EncodeKeys: String, CodingKey {
+        case displayname
+        case parameterName = "parameter_name"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: EncodeKeys.self)
+        try c.encode(displayName, forKey: .displayname)
+        try c.encode(parameterName, forKey: .parameterName)
+    }
+}
+
 // MARK: - Favorites
 
 /// POST /api/4/save|remove/stream/favorite/{token}
