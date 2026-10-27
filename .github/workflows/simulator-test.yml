@@ -9,6 +9,12 @@ jobs:
   simulator-test:
     name: Run on virtual iPhone (iOS 26)
     runs-on: macos-26
+    env:
+      # Optional: when this secret exists, the run also performs a real
+      # end-to-end playback test (signs in with the session token, loads
+      # the live guide, plays the stream in the native AVPlayer).
+      VIU_TEST_TOKEN: ${{ secrets.VIU_TEST_TOKEN }}
+      VIU_TEST_STREAM: "4626"
 
     steps:
       - name: Checkout
@@ -89,6 +95,25 @@ jobs:
 
           xcrun simctl ui "$DEVICE_UDID" appearance light
           xcrun simctl spawn "$DEVICE_UDID" log show --last 2m --predicate 'process == "ViuLiveTV"' > test-artifacts/app-log.txt 2>&1 || true
+
+          # --- Live playback test (only when the CI secret is set) ---
+          if [ -n "$VIU_TEST_TOKEN" ]; then
+            echo "Running live playback test (stream $VIU_TEST_STREAM) ..."
+            xcrun simctl terminate "$DEVICE_UDID" com.c12n.viulivetv || true
+            SIMCTL_CHILD_VIU_PLAYBACK_TEST=1 \
+            SIMCTL_CHILD_VIU_TEST_TOKEN="$VIU_TEST_TOKEN" \
+            SIMCTL_CHILD_VIU_TEST_STREAM="$VIU_TEST_STREAM" \
+              xcrun simctl launch "$DEVICE_UDID" com.c12n.viulivetv | tee test-artifacts/launch-playback.txt
+            sleep 14
+            xcrun simctl io "$DEVICE_UDID" screenshot test-artifacts/playback-1.png
+            sleep 10
+            xcrun simctl io "$DEVICE_UDID" screenshot test-artifacts/playback-2.png
+            sleep 10
+            xcrun simctl io "$DEVICE_UDID" screenshot test-artifacts/playback-3.png
+            xcrun simctl spawn "$DEVICE_UDID" log show --last 5m --predicate 'subsystem == "com.c12n.viulivetv"' > test-artifacts/playback-log.txt 2>&1 || true
+            echo "--- VIU_PLAYBACK lines ---"
+            grep VIU_PLAYBACK test-artifacts/playback-log.txt || true
+          fi
           ls -lh test-artifacts/
 
       - name: Upload simulator screenshots and logs
