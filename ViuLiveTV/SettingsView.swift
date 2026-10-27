@@ -12,11 +12,14 @@ struct SettingsView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(AppSettings.self) private var settingsStore
     @Environment(EPGStore.self) private var epg
+    @Environment(FavoritesStore.self) private var favorites
     @Environment(\.dismiss) private var dismiss
 
     @State private var showLogoutConfirm = false
     @State private var showClearCacheConfirm = false
     @State private var showRestoreDefaultsConfirm = false
+    @State private var showClearFavoritesConfirm = false
+    @State private var cacheSizeText = "…"
 
     var body: some View {
         @Bindable var settings = settingsStore
@@ -91,7 +94,10 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .task { if auth.accountInfo == nil { await auth.loadAccountInfo() } }
+            .task {
+                if auth.accountInfo == nil { await auth.loadAccountInfo() }
+                refreshCacheSize()
+            }
             .confirmationDialog("Sign out of Viu Live TV?",
                                 isPresented: $showLogoutConfirm,
                                 titleVisibility: .visible) {
@@ -105,11 +111,24 @@ struct SettingsView: View {
                                 isPresented: $showClearCacheConfirm,
                                 titleVisibility: .visible) {
                 Button("Clear Cache", role: .destructive) {
-                    Task { await epg.clearGuideCache() }
+                    Task {
+                        await epg.clearGuideCache()
+                        refreshCacheSize()
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The saved channel guide is deleted and downloaded fresh from Viu. Favorites and settings are not affected.")
+                Text("This deletes \(cacheSizeText) of cached data (the saved channel guide and channel logos) and downloads the guide fresh from Viu. Favorites and settings are not affected.")
+            }
+            .confirmationDialog("Clear all favorites?",
+                                isPresented: $showClearFavoritesConfirm,
+                                titleVisibility: .visible) {
+                Button("Clear Favorites", role: .destructive) {
+                    Task { await favorites.clearAll() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Every favorite is removed from this device and from your Viu account on the website. This can't be undone.")
             }
             .confirmationDialog("Restore category defaults?",
                                 isPresented: $showRestoreDefaultsConfirm,
@@ -164,7 +183,17 @@ struct SettingsView: View {
             Button {
                 showClearCacheConfirm = true
             } label: {
-                Label("Clear Cache", systemImage: "trash")
+                HStack {
+                    Label("Clear Cache", systemImage: "trash")
+                    Spacer()
+                    Text(cacheSizeText)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Button(role: .destructive) {
+                showClearFavoritesConfirm = true
+            } label: {
+                Label("Clear Favorites", systemImage: "heart.slash")
             }
             Button {
                 showRestoreDefaultsConfirm = true
@@ -172,6 +201,10 @@ struct SettingsView: View {
                 Label("Restore Defaults", systemImage: "arrow.counterclockwise")
             }
         }
+    }
+
+    private func refreshCacheSize() {
+        cacheSizeText = ByteCountFormatter.string(fromByteCount: epg.cacheSizeBytes, countStyle: .file)
     }
 
     // MARK: Sections without bindings

@@ -98,10 +98,32 @@ final class EPGStore {
         state = .idle
     }
 
-    /// Clear Cache (Settings): drop the on-disk guide and download it fresh.
+    /// Clear Cache (Settings): drop everything in the app's Caches
+    /// directory (the saved guide + cached channel logos) and download
+    /// the guide fresh.
     func clearGuideCache() async {
-        if let url = Self.cacheURL { try? FileManager.default.removeItem(at: url) }
+        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+           let items = try? FileManager.default.contentsOfDirectory(at: caches, includingPropertiesForKeys: nil) {
+            for item in items { try? FileManager.default.removeItem(at: item) }
+        }
+        URLCache.shared.removeAllCachedResponses()
         await refresh()
+    }
+
+    /// How much data the app currently holds in its Caches directory —
+    /// shown next to Clear Cache in Settings.
+    var cacheSizeBytes: Int64 {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+              let enumerator = FileManager.default.enumerator(at: caches, includingPropertiesForKeys: [.fileSizeKey]) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
     }
 
     // MARK: Category visibility & order (user preferences)

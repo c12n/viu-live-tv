@@ -50,6 +50,18 @@ final class FavoritesStore {
         if changed { save() }
     }
 
+    /// Clear Favorites (Settings): remove every favorite locally AND on
+    /// the server, so the website's list is cleared too and the launch
+    /// sync doesn't bring them back.
+    func clearAll() async {
+        let current = ids
+        ids = []
+        save()
+        for id in current {
+            try? await APIClient.shared.removeFavorite(streamID: id)
+        }
+    }
+
     private var didReconcile = false
 
     /// Two-way sync with the account's favorites on the server — the same
