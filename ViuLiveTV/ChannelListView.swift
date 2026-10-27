@@ -116,22 +116,7 @@ struct ChannelListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Search channels or shows")
         .refreshable { await epg.refresh() }
-        .safeAreaInset(edge: .top) {
-            VStack(spacing: 0) {
-                if isSidebar {
-                    Picker("View", selection: $tab) {
-                        ForEach(ChannelTab.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
-                }
-                if !displayTags.isEmpty {
-                    categoryChips
-                }
-            }
-            .background(.bar)
-        }
+        .safeAreaInset(edge: .top) { topInset }
         .alert(item: $externalAlert) { alert in
             Alert(title: Text(alert.title),
                   message: Text(alert.message),
@@ -148,7 +133,38 @@ struct ChannelListView: View {
         }
     }
 
+    // MARK: Top inset (iPad picker + category chips)
+
+    private var topInset: some View {
+        VStack(spacing: 0) {
+            if isSidebar {
+                Picker("View", selection: $tab) {
+                    ForEach(ChannelTab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+            }
+            if !displayTags.isEmpty {
+                categoryChips
+            }
+        }
+        .background(.bar)
+    }
+
     // MARK: Category chips
+
+    /// The server's ALL and FAVORITES tags duplicate the built-in All /
+    /// Favorites tabs, so they are not repeated as chips. Written as an
+    /// explicit loop — a filter closure here pushed the type checker over
+    /// its limit inside the big list body.
+    private var displayTags: [EPGTag] {
+        var result: [EPGTag] = []
+        for tag in epg.tags where tag.parameterName != "ALL" && tag.parameterName != "FAVORITES" {
+            result.append(tag)
+        }
+        return result
+    }
 
     private var categoryChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -156,7 +172,7 @@ struct ChannelListView: View {
                 chip(title: "All", isSelected: selectedCategory == nil) {
                     selectedCategory = nil
                 }
-                ForEach(epg.tags) { tag in
+                ForEach(displayTags) { tag in
                     chip(title: tag.displayName, isSelected: selectedCategory == tag.parameterName) {
                         selectedCategory = tag.parameterName
                     }
