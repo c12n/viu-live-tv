@@ -42,6 +42,8 @@ struct MainView: View {
     @State private var selection: EPGChannel?
     @State private var showSettings = false
     @State private var tab: ChannelTab = .all
+    /// iPhone navigation path — the context menu's Play pushes through here.
+    @State private var path: [EPGChannel] = []
 
     var body: some View {
         if hSize == .regular {
@@ -74,8 +76,9 @@ struct MainView: View {
     // iPhone / compact: navigation stack, player pushed, YouTube-style
     // floating pill tab bar docked at the bottom of the channel list.
     private var stackLayout: some View {
-        NavigationStack {
-            ChannelListView(selection: $selection, tab: $tab)
+        NavigationStack(path: $path) {
+            ChannelListView(selection: $selection, tab: $tab,
+                            onPlayRequest: { path.append($0) })
                 .navigationDestination(for: EPGChannel.self) { channel in
                     PlayerView(channel: channel)
                 }

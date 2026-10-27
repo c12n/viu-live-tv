@@ -81,6 +81,7 @@ struct SettingsView: View {
                                 isPresented: $showLogoutConfirm,
                                 titleVisibility: .visible) {
                 Button("Sign Out", role: .destructive) {
+                    epg.clearCacheAndReset()
                     Task { await auth.logout() }
                 }
                 Button("Cancel", role: .cancel) {}

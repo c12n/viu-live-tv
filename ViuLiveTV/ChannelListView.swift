@@ -33,6 +33,11 @@ struct ChannelListView: View {
     @Binding var tab: ChannelTab
     /// Whether this list is acting as an iPad sidebar (affects row selection UI).
     var isSidebar: Bool = false
+    /// iPhone: ask the owner to push the player (path-driven navigation).
+    /// Row taps use NavigationLink, but the context menu's Play needs this —
+    /// setting `selection` alone never navigated on iPhone, which made the
+    /// menu's Play button a no-op.
+    var onPlayRequest: ((EPGChannel) -> Void)?
 
     @State private var search = ""
     /// Selected live TV category (tag parameter_name); nil = All.
@@ -106,6 +111,16 @@ struct ChannelListView: View {
                         row(for: channel)
                             .tag(channel)        // for sidebar selection
                             .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 14))
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                let isFav = favorites.isFavorite(channel.streamId)
+                                Button {
+                                    favorites.toggle(channel)
+                                } label: {
+                                    Label(isFav ? "Unfavorite" : "Favorite",
+                                          systemImage: isFav ? "star.slash" : "star.fill")
+                                }
+                                .tint(isFav ? .orange : .yellow)
+                            }
                     }
                 }
             }
@@ -145,7 +160,7 @@ struct ChannelListView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
             }
-            if !displayTags.isEmpty {
+            if !displayTags.isEmpty && !epg.usingFallback {
                 categoryChips
             }
         }
@@ -222,7 +237,13 @@ struct ChannelListView: View {
     }
 
     private func play(_ channel: EPGChannel) {
-        selection = channel
+        if isSidebar {
+            selection = channel
+        } else if let onPlayRequest {
+            onPlayRequest(channel)
+        } else {
+            selection = channel
+        }
     }
 
     private func openExternal(_ channel: EPGChannel) {

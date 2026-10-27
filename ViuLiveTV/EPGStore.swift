@@ -39,20 +39,76 @@ final class EPGStore {
     private(set) var channelCategories: [Int: Set<String>] = [:]
 
     init() {
-        // Start with fallback so the first frame is populated.
+        // Start from the disk cache when we have one (instant channel list
+        // from the last session, refreshed in the background); otherwise
+        // start with the bundled fallback so the first frame is populated.
+        if let cache = Self.loadCache() {
+            channels = cache.channels
+            tags = cache.tags
+            channelCategories = cache.categories
+            lastUpdated = cache.savedAt
+            usingFallback = false
+            state = .loaded(count: cache.channels.count)
+        } else {
+            channels = Self.fallbackChannels
+            usingFallback = true
+        }
+    }
+
+    // MARK: Disk cache
+
+    private struct CachePayload: Codable {
+        var channels: [EPGChannel]
+        var tags: [EPGTag]
+        var categories: [Int: Set<String>]
+        var savedAt: Date
+    }
+
+    private static var cacheURL: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+            .first?.appendingPathComponent("viu-epg-cache.json")
+    }
+
+    private static func loadCache() -> CachePayload? {
+        guard let url = cacheURL,
+              let data = try? Data(contentsOf: url),
+              let payload = try? JSONDecoder().decode(CachePayload.self, from: data),
+              !payload.channels.isEmpty else { return nil }
+        return payload
+    }
+
+    private func saveCache() {
+        guard let url = Self.cacheURL else { return }
+        let payload = CachePayload(channels: channels, tags: tags,
+                                   categories: channelCategories, savedAt: Date())
+        if let data = try? JSONEncoder().encode(payload) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// Sign-out: forget the cached guide and return to the bundled samples.
+    func clearCacheAndReset() {
+        if let url = Self.cacheURL { try? FileManager.default.removeItem(at: url) }
         channels = Self.fallbackChannels
+        tags = []
+        channelCategories = [:]
         usingFallback = true
+        lastUpdated = nil
+        sessionExpired = false
+        state = .idle
     }
 
     /// Fetch the live channel list. On failure, keep whatever we have
     /// (fallback or previously loaded) and record what the server said.
     ///
-    /// Strategy (mirrors the Android app, whose main flow is tags -> per-tag
-    /// EPG; the token-less V2 feed now answers "Error 2", verified live):
-    ///  1. Tags, then every tag's EPG fetched IN PARALLEL and merged.
-    ///  2. `epgjson.php?token=` with no tag.
-    ///  3. `epgjsonV2.php?token=`
-    ///  4. Plain `epgjsonV2.php` (original, token-less)
+    /// Strategy:
+    ///  1. FAST: tags + the single ALL feed (one request); categories come
+    ///     from each channel's own `tags` field.
+    ///  2. Tags, then every tag's EPG fetched IN PARALLEL and merged.
+    ///  3. `epgjson.php?token=` with no tag.
+    ///  4. `epgjsonV2.php?token=`
+    ///  5. Plain `epgjsonV2.php` (original, token-less)
+    /// A successful load is cached to disk so the next launch is instant.
     @MainActor
     func refresh() async {
         state = .loading
@@ -70,6 +126,7 @@ final class EPGStore {
                 usingFallback = false
                 lastUpdated = Date()
                 state = .loaded(count: channels.count)
+                saveCache()
             }
         } catch {
             strategyLog = log.lines
@@ -103,7 +160,24 @@ final class EPGStore {
         }
 
         if await APIClient.shared.currentToken() != nil {
-            // 1. Per-tag EPG in parallel (the Android app's primary flow).
+            // 1. FAST PATH: the single ALL feed. It already contains every
+            //    channel (1,145 channels / ~2.3 MB / ~3 s on the wire,
+            //    measured) and each channel's own `tags` field names its
+            //    categories, so one request replaces the 72-request merge
+            //    that made loading take ~25 s.
+            do {
+                let fetchedTags = try await APIClient.shared.fetchTags()
+                let usable = fetchedTags.filter { !$0.parameterName.isEmpty }
+                if !usable.isEmpty { tags = usable }
+                let all = try await APIClient.shared.fetchChannels(tag: "ALL")
+                log.lines.append("ALL feed: \(all.count) channels (single request)")
+                if !all.isEmpty {
+                    channelCategories = Self.categoryMapping(from: all)
+                    return all
+                }
+            } catch { note(error, "ALL feed") }
+
+            // 2. Per-tag EPG in parallel (the Android app's primary flow).
             do {
                 let fetchedTags = try await APIClient.shared.fetchTags()
                 let usable = fetchedTags.filter { !$0.parameterName.isEmpty }
@@ -175,6 +249,25 @@ final class EPGStore {
         return merged
     }
 
+    /// Category membership from each channel's own `tags` string
+    /// (e.g. "uk, cinema" -> {UK, CINEMA}), normalised to the parameter_name
+    /// shape used by epg_tags.php (uppercased, spaces -> underscores).
+    static func categoryMapping(from channels: [EPGChannel]) -> [Int: Set<String>] {
+        var mapping: [Int: Set<String>] = [:]
+        for ch in channels {
+            guard let tags = ch.tags else { continue }
+            var set = Set<String>()
+            for raw in tags.split(separator: ",") {
+                let token = raw.trimmingCharacters(in: .whitespaces)
+                    .uppercased()
+                    .replacingOccurrences(of: " ", with: "_")
+                if !token.isEmpty { set.insert(token) }
+            }
+            if !set.isEmpty { mapping[ch.streamId] = set }
+        }
+        return mapping
+    }
+
     private func dedupeAndSort(_ input: [EPGChannel]) -> [EPGChannel] {
         var seen = Set<Int>()
         var out: [EPGChannel] = []
@@ -213,9 +306,16 @@ final class EPGStore {
         var result = channels
         if let category, !category.isEmpty {
             result = result.filter { ch in
-                channelCategories[ch.streamId]?.contains(category) == true
-                    || ch.categoryId == category
-                    || (ch.tags?.localizedCaseInsensitiveContains(category) ?? false)
+                if channelCategories[ch.streamId]?.contains(category) == true { return true }
+                if ch.categoryId == category { return true }
+                // Fallback: normalised token match against the raw tags
+                // string ("HOT_RIGHT_NOW" vs "hot right now, sports").
+                guard let tags = ch.tags else { return false }
+                return tags.split(separator: ",").contains {
+                    $0.trimmingCharacters(in: .whitespaces)
+                        .uppercased()
+                        .replacingOccurrences(of: " ", with: "_") == category
+                }
             }
         }
         let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
