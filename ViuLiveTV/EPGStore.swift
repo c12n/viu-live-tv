@@ -34,6 +34,9 @@ final class EPGStore {
     private(set) var sessionExpired = false
     /// Per-strategy outcome of the last refresh — shown by Diagnostics.
     private(set) var strategyLog: [String] = []
+    /// Which categories (tag parameter_names) each channel belongs to,
+    /// learned from the per-tag EPG merge. Powers the category filter.
+    private(set) var channelCategories: [Int: Set<String>] = [:]
 
     init() {
         // Start with fallback so the first frame is populated.
@@ -54,6 +57,7 @@ final class EPGStore {
     func refresh() async {
         state = .loading
         sessionExpired = false
+        channelCategories = [:]
         let log = StrategyLogBox()
         do {
             let fetched = try await fetchAllChannels(log: log)
@@ -148,18 +152,27 @@ final class EPGStore {
     }
 
     /// Fetches every tag's channel list concurrently instead of one-by-one
-    /// (a sequential pass over dozens of tags took minutes).
+    /// (a sequential pass over dozens of tags took minutes). Also records
+    /// which categories each channel came from.
     private func fetchChannelsForTagsInParallel(_ tagsToFetch: [EPGTag]) async -> [EPGChannel] {
-        await withTaskGroup(of: [EPGChannel].self) { group in
+        let results: [(String, [EPGChannel])] = await withTaskGroup(of: (String, [EPGChannel]).self) { group in
             for tag in tagsToFetch {
                 group.addTask {
-                    (try? await APIClient.shared.fetchChannels(tag: tag.parameterName)) ?? []
+                    (tag.parameterName, (try? await APIClient.shared.fetchChannels(tag: tag.parameterName)) ?? [])
                 }
             }
-            var merged: [EPGChannel] = []
-            for await part in group { merged.append(contentsOf: part) }
-            return merged
+            var out: [(String, [EPGChannel])] = []
+            for await part in group { out.append(part) }
+            return out
         }
+        var mapping: [Int: Set<String>] = [:]
+        var merged: [EPGChannel] = []
+        for (param, chans) in results {
+            merged.append(contentsOf: chans)
+            for ch in chans { mapping[ch.streamId, default: []].insert(param) }
+        }
+        channelCategories = mapping
+        return merged
     }
 
     private func dedupeAndSort(_ input: [EPGChannel]) -> [EPGChannel] {
@@ -194,11 +207,16 @@ final class EPGStore {
         channel.nextProgramme(at: date)
     }
 
-    /// Filter + search helper used by the list view.
-    func filtered(search: String, categoryID: String? = nil) -> [EPGChannel] {
+    /// Filter + search helper used by the list view. `category` is a tag
+    /// parameter_name (a live TV category from epg_tags.php).
+    func filtered(search: String, category: String? = nil) -> [EPGChannel] {
         var result = channels
-        if let categoryID, !categoryID.isEmpty {
-            result = result.filter { $0.categoryId == categoryID }
+        if let category, !category.isEmpty {
+            result = result.filter { ch in
+                channelCategories[ch.streamId]?.contains(category) == true
+                    || ch.categoryId == category
+                    || (ch.tags?.localizedCaseInsensitiveContains(category) ?? false)
+            }
         }
         let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return result }

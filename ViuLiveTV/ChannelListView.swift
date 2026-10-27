@@ -2,8 +2,11 @@
 //  ChannelListView.swift
 //  Viu Live TV
 //
-//  The first screen after login: All Channels | Favorites, with search,
-//  pull-to-refresh, and per-row play / favorite / open-external actions.
+//  The first screen after login: channel list with search, category chips
+//  (the server's live TV categories / tags), pull-to-refresh, and per-row
+//  play / favorite / open-external actions. The All Channels | Favorites
+//  switch lives in the floating bottom tab bar (iPhone) or a compact
+//  segmented control (iPad sidebar).
 //
 //  On iPhone this is pushed in a NavigationStack. On iPad it is the sidebar
 //  of a NavigationSplitView (see ContentView), and selecting a channel sets
@@ -26,11 +29,14 @@ struct ChannelListView: View {
 
     /// On iPad, selecting a channel drives the detail column. On iPhone we push.
     @Binding var selection: EPGChannel?
+    /// All Channels vs Favorites — owned by MainView (floating tab bar).
+    @Binding var tab: ChannelTab
     /// Whether this list is acting as an iPad sidebar (affects row selection UI).
     var isSidebar: Bool = false
 
-    @State private var tab: ChannelTab = .all
     @State private var search = ""
+    /// Selected live TV category (tag parameter_name); nil = All.
+    @State private var selectedCategory: String?
 
     // External-player alert state.
     @State private var externalAlert: ExternalAlert?
@@ -42,7 +48,7 @@ struct ChannelListView: View {
     }
 
     private var visibleChannels: [EPGChannel] {
-        let base = epg.filtered(search: search)
+        let base = epg.filtered(search: search, category: selectedCategory)
         switch tab {
         case .all:       return base
         case .favorites: return base.filter { favorites.isFavorite($0.streamId) }
@@ -99,21 +105,31 @@ struct ChannelListView: View {
                     ForEach(visibleChannels) { channel in
                         row(for: channel)
                             .tag(channel)        // for sidebar selection
+                            .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 14))
                     }
                 }
             }
         }
         .listStyle(.plain)
+        .listSectionSpacing(6)
         .navigationTitle("Viu Live TV")
+        .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Search channels or shows")
         .refreshable { await epg.refresh() }
         .safeAreaInset(edge: .top) {
-            Picker("View", selection: $tab) {
-                ForEach(ChannelTab.allCases) { Text($0.rawValue).tag($0) }
+            VStack(spacing: 0) {
+                if isSidebar {
+                    Picker("View", selection: $tab) {
+                        ForEach(ChannelTab.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                }
+                if epg.tags.count > 1 {
+                    categoryChips
+                }
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.vertical, 8)
             .background(.bar)
         }
         .alert(item: $externalAlert) { alert in
@@ -124,7 +140,48 @@ struct ChannelListView: View {
         .task {
             if epg.usingFallback { await epg.refresh() }
         }
+        .onChange(of: epg.tags) { _, newTags in
+            // Drop a category selection that no longer exists.
+            if let selectedCategory, !newTags.contains(where: { $0.parameterName == selectedCategory }) {
+                self.selectedCategory = nil
+            }
+        }
     }
+
+    // MARK: Category chips
+
+    private var categoryChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                chip(title: "All", isSelected: selectedCategory == nil) {
+                    selectedCategory = nil
+                }
+                ForEach(epg.tags) { tag in
+                    chip(title: tag.displayName, isSelected: selectedCategory == tag.parameterName) {
+                        selectedCategory = tag.parameterName
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func chip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(isSelected ? Color.accentColor : Color(.secondarySystemBackground),
+                            in: Capsule())
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Rows
 
     @ViewBuilder
     private func row(for channel: EPGChannel) -> some View {

@@ -28,27 +28,27 @@ struct ChannelRowView: View {
     private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             logo
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
                     if let num = channel.num {
                         Text("\(num)")
                             .font(.caption2.monospacedDigit().weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .frame(minWidth: 22, alignment: .leading)
+                            .frame(minWidth: 18, alignment: .leading)
                     }
                     Text(channel.name)
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     if (now?.isLive(at: clock) ?? false) {
-                        LiveBadge().scaleEffect(0.85)
+                        LiveBadge().scaleEffect(0.8)
                     }
                 }
 
                 Text(nowLine)
-                    .font(.subheadline)
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
@@ -56,7 +56,7 @@ struct ChannelRowView: View {
                     ProgressView(value: progress)
                         .tint(.accentColor)
                         .frame(height: 3)
-                        .padding(.top, 2)
+                        .padding(.top, 1)
                 }
 
                 if let next {
@@ -66,18 +66,18 @@ struct ChannelRowView: View {
                         .lineLimit(1)
                 }
             }
-            Spacer(minLength: 4)
+            Spacer(minLength: 2)
 
             Button(action: onToggleFavorite) {
                 Image(systemName: isFavorite ? "star.fill" : "star")
                     .foregroundStyle(isFavorite ? .yellow : .secondary)
-                    .font(.title3)
+                    .font(.body)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 3)
         .contentShape(Rectangle())
         .modifier(TapToPlayModifier(enabled: tapToPlay, action: onPlay))
         .onReceive(timer) { clock = $0 }
@@ -101,13 +101,13 @@ struct ChannelRowView: View {
     @ViewBuilder
     private var logo: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
             if let url = channel.logoURL {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
-                        image.resizable().scaledToFit().padding(5)
+                        image.resizable().scaledToFit().padding(4)
                     case .failure:
                         placeholderGlyph
                     case .empty:
@@ -120,13 +120,13 @@ struct ChannelRowView: View {
                 placeholderGlyph
             }
         }
-        .frame(width: 54, height: 54)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(width: 42, height: 42)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var placeholderGlyph: some View {
         Image(systemName: "tv")
-            .font(.title3)
+            .font(.body)
             .foregroundStyle(.secondary)
     }
 }
