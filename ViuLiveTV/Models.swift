@@ -162,6 +162,32 @@ struct AccountInfo: Decodable, Equatable {
         if !full.isEmpty { return full }
         return username ?? "Account"
     }
+
+    /// The app requires an active subscription. The server reports the
+    /// premium status as a string ("ACTIVE" for a live subscription);
+    /// anything else that is present counts as not active. Without a
+    /// status string, fall back to the expiry date when it parses.
+    var hasActiveSubscription: Bool {
+        if let status = premiumStatus?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !status.isEmpty {
+            return status.caseInsensitiveCompare("ACTIVE") == .orderedSame
+        }
+        if let exp = premiumExpiresOn, let date = Self.parseExpiryDate(exp) {
+            return date >= Date()
+        }
+        return false
+    }
+
+    private static func parseExpiryDate(_ raw: String) -> Date? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for format in ["yyyy-MM-dd", "yyyy-MM-dd HH:mm:ss", "dd-MM-yyyy", "MM/dd/yyyy"] {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = format
+            if let date = formatter.date(from: value) { return date }
+        }
+        return nil
+    }
 }
 
 // MARK: - Live links

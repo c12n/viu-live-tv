@@ -22,7 +22,16 @@ struct ContentView: View {
             case .signedOut:
                 LoginView()
             case .signedIn:
-                MainView()
+                // Subscription gate: an active subscription is required
+                // to use the app.
+                switch auth.subscriptionState {
+                case .active:
+                    MainView()
+                case .inactive:
+                    SubscriptionRequiredView()
+                case .unknown:
+                    SubscriptionCheckingView()
+                }
             }
         }
         .animation(.default, value: auth.state)

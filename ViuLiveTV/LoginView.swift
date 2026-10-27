@@ -173,3 +173,115 @@ struct LoginView: View {
         Task { await auth.login(user: username, password: password) }
     }
 }
+
+// MARK: - Subscription gate
+
+/// Shown briefly at launch while the account's subscription status is
+/// being checked.
+struct SubscriptionCheckingView: View {
+    @Environment(AuthViewModel.self) private var auth
+    @Environment(EPGStore.self) private var epg
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView().controlSize(.large)
+            Text("Checking your subscription…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Button {
+                Task { await auth.loadAccountInfo() }
+            } label: {
+                Label("Try Again", systemImage: "arrow.clockwise")
+            }
+            .padding(.top, 8)
+            Button("Sign Out", role: .destructive) {
+                epg.clearCacheAndReset()
+                Task { await auth.logout() }
+            }
+            .font(.callout)
+        }
+        .padding(24)
+    }
+}
+
+/// Shown when the signed-in account has no active subscription: the app
+/// can't be used until the subscription is renewed or purchased.
+struct SubscriptionRequiredView: View {
+    @Environment(AuthViewModel.self) private var auth
+    @Environment(EPGStore.self) private var epg
+    @Environment(\.openURL) private var openURL
+    @State private var checking = false
+
+    /// The service's official website (member portal — renewals and
+    /// purchases happen there).
+    private static let purchaseURL = URL(string: "https://viu.to")!
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 22) {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 52))
+                        .foregroundStyle(.orange)
+                        .padding(.top, 36)
+                    Text("Non-Active Subscription Found")
+                        .font(.title.weight(.bold))
+                        .multilineTextAlignment(.center)
+                    Text("An active subscription is required to use Viu Live TV. Please renew or purchase a subscription to continue watching.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    if let status = auth.accountInfo?.premiumStatus, !status.isEmpty {
+                        Text("Current status: \(status)")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let expiry = auth.accountInfo?.premiumExpiresOn, !expiry.isEmpty {
+                        Text("Subscription expiry: \(expiry)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Button {
+                    openURL(Self.purchaseURL)
+                } label: {
+                    Text("Renew or Purchase")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .background(.tint, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .foregroundStyle(.white)
+
+                Button {
+                    checking = true
+                    Task {
+                        await auth.loadAccountInfo()
+                        checking = false
+                    }
+                } label: {
+                    HStack {
+                        if checking { ProgressView() }
+                        Label("I've Renewed — Check Again", systemImage: "arrow.clockwise")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                }
+                .glassControl(cornerRadius: 12, tint: .accentColor)
+                .disabled(checking)
+
+                Button("Sign Out", role: .destructive) {
+                    epg.clearCacheAndReset()
+                    Task { await auth.logout() }
+                }
+                .font(.callout)
+                .padding(.top, 4)
+            }
+            .padding(20)
+            .frame(maxWidth: 480)
+            .frame(maxWidth: .infinity)
+        }
+    }
+}

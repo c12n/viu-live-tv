@@ -23,6 +23,21 @@ final class AuthViewModel {
     var errorMessage: String?
     var accountInfo: AccountInfo?
 
+    /// Subscription gate: the app is only usable with an active
+    /// subscription. Resolved whenever account info is (re)fetched.
+    enum SubscriptionState: Equatable {
+        case unknown        // not checked yet
+        case active
+        case inactive
+    }
+
+    var subscriptionState: SubscriptionState = .unknown
+
+    private func applyAccountInfo(_ info: AccountInfo) {
+        accountInfo = info
+        subscriptionState = info.hasActiveSubscription ? .active : .inactive
+    }
+
     /// Persisted username (not the password).
     var username: String {
         get { UserDefaults.standard.string(forKey: usernameKey) ?? "" }
@@ -51,10 +66,13 @@ final class AuthViewModel {
         await APIClient.shared.setToken(Keychain.shared.token)
         do {
             _ = try await APIClient.shared.checkService()
+            // Resolve the subscription gate for this launch too.
+            await loadAccountInfo()
         } catch let error as APIError {
             if case .sessionExpired = error {
                 await APIClient.shared.setToken(nil)
                 accountInfo = nil
+                subscriptionState = .unknown
                 errorMessage = "Your Viu session expired (it may have been signed in elsewhere). Please sign in again."
                 state = .signedOut
             }
@@ -106,7 +124,7 @@ final class AuthViewModel {
         // Validate by pulling account info; if it fails, roll back.
         do {
             let info = try await APIClient.shared.accountInfo()
-            accountInfo = info
+            applyAccountInfo(info)
             state = .signedIn
         } catch {
             await APIClient.shared.setToken(nil)
@@ -119,10 +137,10 @@ final class AuthViewModel {
 
     func loadAccountInfo() async {
         do {
-            accountInfo = try await APIClient.shared.accountInfo()
+            applyAccountInfo(try await APIClient.shared.accountInfo())
         } catch {
-            // Non-fatal — settings screen will show what it can.
-            accountInfo = nil
+            // Non-fatal — keep whatever we already had (a network hiccup
+            // must not flap the subscription gate or blank Settings).
         }
     }
 
@@ -133,6 +151,7 @@ final class AuthViewModel {
         defer { isWorking = false }
         await APIClient.shared.logout()
         accountInfo = nil
+        subscriptionState = .unknown
         state = .signedOut
     }
 
