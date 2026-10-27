@@ -1,5 +1,7 @@
 # Viu Live TV
 
+# The project is unofficial & strictly a hobby project 
+
 A clean, native **Live TV** app for iPhone and iPad, built entirely with **SwiftUI** for **iOS 17+**, with a native **Liquid Glass** interface on iOS 26, native **Light / Dark Mode**, and a custom app icon.
 
 It is a ground-up iOS counterpart of the Viu Android TV app (`com.viu.viuapp` v1.12), using the same backend at `api.viu.rs` — **Live TV only**: no movies, no series, no video-on-demand. An **active VIP subscription is required** to use the app (see below).
