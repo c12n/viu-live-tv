@@ -16,6 +16,7 @@ struct ViuLiveTVApp: App {
     @State private var epg = EPGStore()
     @State private var favorites = FavoritesStore()
     @State private var settings = AppSettings()
+    @State private var parental = ParentalControls()
 
     init() {
         // Configure audio session up-front so PiP / AirPlay behave.
@@ -36,12 +37,14 @@ struct ViuLiveTVApp: App {
                     .environment(epg)
                     .environment(favorites)
                     .environment(settings)
+                    .environment(parental)
             } else {
                 ContentView()
                     .environment(auth)
                     .environment(epg)
                     .environment(favorites)
                     .environment(settings)
+                    .environment(parental)
             }
         }
     }

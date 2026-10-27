@@ -7,12 +7,14 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(AppSettings.self) private var settingsStore
     @Environment(EPGStore.self) private var epg
     @Environment(FavoritesStore.self) private var favorites
+    @Environment(ParentalControls.self) private var parental
     @Environment(\.dismiss) private var dismiss
 
     @State private var showLogoutConfirm = false
@@ -20,6 +22,7 @@ struct SettingsView: View {
     @State private var showRestoreDefaultsConfirm = false
     @State private var showClearFavoritesConfirm = false
     @State private var cacheSizeText = "…"
+    @State private var pinFlow: PINFlow?
 
     var body: some View {
         @Bindable var settings = settingsStore
@@ -32,7 +35,44 @@ struct SettingsView: View {
                     Picker("Theme", selection: $settings.appearance) {
                         ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
                     }
+                    Toggle("Haptic Feedback", isOn: Binding(
+                        get: { settingsStore.hapticsEnabled },
+                        set: { settingsStore.hapticsEnabled = $0 }
+                    ))
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Accent Color")
+                        HStack(spacing: 12) {
+                            ForEach(AccentChoice.allCases) { choice in
+                                Button {
+                                    settingsStore.accent = choice
+                                    UIApplication.shared.setAlternateIconName(choice.iconName) { _ in }
+                                    Haptics.light()
+                                } label: {
+                                    Circle()
+                                        .fill(choice.color)
+                                        .frame(width: 30, height: 30)
+                                        .overlay {
+                                            if settingsStore.accent == choice {
+                                                Image(systemName: "checkmark")
+                                                    .font(.caption.bold())
+                                                    .foregroundStyle(.white)
+                                            }
+                                        }
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(choice.label)
+                            }
+                        }
+                        Text("Also changes the VIU letters on the app icon.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
                 }
+
+                parentalSection
+
+                sportsSection
 
                 Section {
                     Picker("External Player", selection: $settings.externalPlayer) {
@@ -98,6 +138,11 @@ struct SettingsView: View {
                 if auth.accountInfo == nil { await auth.loadAccountInfo() }
                 refreshCacheSize()
             }
+            .sheet(item: $pinFlow) { flow in
+                PINEntryView(mode: flow.mode) { ok in
+                    if ok { flow.onSuccess() }
+                }
+            }
             .confirmationDialog("Sign out of Viu Live TV?",
                                 isPresented: $showLogoutConfirm,
                                 titleVisibility: .visible) {
@@ -140,6 +185,67 @@ struct SettingsView: View {
             } message: {
                 Text("All channel categories will be shown again, and their order reset to the default. Favorites and other settings are not affected.")
             }
+        }
+    }
+
+    // MARK: Parental controls & modes
+
+    private var parentalSection: some View {
+        Section {
+            Toggle("Parental Controls", isOn: Binding(
+                get: { parental.isEnabled },
+                set: { newValue in
+                    if newValue {
+                        if parental.hasPIN { parental.isEnabled = true }
+                        else { pinFlow = PINFlow(mode: .setup) { parental.isEnabled = true } }
+                    } else {
+                        pinFlow = PINFlow(mode: .verify) { parental.isEnabled = false }
+                    }
+                }
+            ))
+            if parental.isEnabled {
+                NavigationLink {
+                    LockedChannelsView()
+                } label: {
+                    HStack {
+                        Label("Locked Channels", systemImage: "lock.fill")
+                        Spacer()
+                        Text("\(parental.lockedIDs.count)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button("Change PIN") {
+                    pinFlow = PINFlow(mode: .change) {}
+                }
+            }
+            Toggle("Kids Mode", isOn: Binding(
+                get: { parental.kidsModeEnabled },
+                set: { newValue in
+                    if newValue {
+                        if parental.hasPIN { parental.kidsModeEnabled = true }
+                        else { pinFlow = PINFlow(mode: .setup) { parental.kidsModeEnabled = true } }
+                    } else {
+                        pinFlow = PINFlow(mode: .verify) { parental.kidsModeEnabled = false }
+                    }
+                }
+            ))
+        } header: {
+            Text("Parental Controls")
+        } footer: {
+            Text("Locked channels ask for a 4-digit PIN before they play, and a lock icon shows next to locked channels in the lists and search. Kids Mode limits the app to the Kids category — the PIN is only needed to turn Kids Mode off (if no PIN exists yet, you create one when you turn it on). Forgot your PIN? Sign out and sign back in to reset parental controls.")
+        }
+    }
+
+    private var sportsSection: some View {
+        Section {
+            Toggle("Sports Mode", isOn: Binding(
+                get: { settingsStore.sportsModeEnabled },
+                set: { settingsStore.sportsModeEnabled = $0 }
+            ))
+        } header: {
+            Text("Sports Mode")
+        } footer: {
+            Text("Shows only sports categories (Sports, Hockey, ESPN+, TSN+ and similar). No PIN needed. While Kids Mode is on, Kids Mode takes over.")
         }
     }
 
@@ -332,5 +438,207 @@ struct DiagnosticsView: View {
         running = true
         defer { running = false }
         lines = await APIClient.shared.runDiagnostics()
+    }
+}
+
+// MARK: - Parental PIN
+
+enum PINEntryMode { case verify, setup, change }
+
+/// A PIN sheet request from Settings: which flow to run, and what to do
+/// after it succeeds.
+struct PINFlow: Identifiable {
+    let id = UUID()
+    let mode: PINEntryMode
+    let onSuccess: () -> Void
+}
+
+/// 4-digit PIN pad for parental controls: verifying (locked channel,
+/// turning a mode or the controls off), setting a first PIN, or
+/// changing an existing PIN (verify current, then enter + confirm).
+struct PINEntryView: View {
+    @Environment(ParentalControls.self) private var parental
+    @Environment(AppSettings.self) private var settings
+    @Environment(\.dismiss) private var dismiss
+
+    let mode: PINEntryMode
+    var onFinished: (Bool) -> Void
+
+    @State private var entry = ""
+    @State private var firstEntry: String?
+    @State private var stepIndex = 0
+    @State private var errorText: String?
+    @State private var completed = false
+
+    private enum Step { case verify, new, confirm }
+
+    private var steps: [Step] {
+        switch mode {
+        case .verify: return [.verify]
+        case .setup:  return [.new, .confirm]
+        case .change: return [.verify, .new, .confirm]
+        }
+    }
+
+    private var currentStep: Step { steps[min(stepIndex, steps.count - 1)] }
+
+    private var title: String {
+        switch currentStep {
+        case .verify:  return "Enter PIN"
+        case .new:     return mode == .change ? "Enter New PIN" : "Create a PIN"
+        case .confirm: return "Confirm PIN"
+        }
+    }
+
+    private var subtitle: String {
+        switch currentStep {
+        case .verify:  return "This is protected by parental controls."
+        case .new:     return "Choose a 4-digit PIN for parental controls."
+        case .confirm: return "Enter the PIN once more to confirm it."
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Spacer()
+            Image(systemName: "lock.fill")
+                .font(.largeTitle)
+                .foregroundStyle(settings.accent.color)
+            Text(title)
+                .font(.title3.bold())
+            Text(errorText ?? subtitle)
+                .font(.subheadline)
+                .foregroundStyle(errorText == nil ? .secondary : .red)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 16) {
+                ForEach(0..<4, id: \.self) { i in
+                    Circle()
+                        .fill(i < entry.count ? settings.accent.color : Color.secondary.opacity(0.3))
+                        .frame(width: 14, height: 14)
+                }
+            }
+            keypad
+            Button("Cancel") { finish(false) }
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding()
+        .onDisappear { if !completed { onFinished(false) } }
+    }
+
+    private var keypad: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
+            ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"], id: \.self) { key in
+                Button { tap(key) } label: {
+                    Group {
+                        if key == "del" {
+                            Image(systemName: "delete.left")
+                        } else {
+                            Text(key).font(.title2.weight(.medium))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .glassControl(cornerRadius: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(key.isEmpty)
+                .opacity(key.isEmpty ? 0 : 1)
+            }
+        }
+        .frame(maxWidth: 300)
+    }
+
+    private func tap(_ key: String) {
+        if key == "del" {
+            if !entry.isEmpty { entry.removeLast() }
+            return
+        }
+        guard entry.count < 4 else { return }
+        entry.append(key)
+        errorText = nil
+        Haptics.light()
+        if entry.count == 4 {
+            Task {
+                try? await Task.sleep(for: .milliseconds(160))
+                completeEntry()
+            }
+        }
+    }
+
+    private func completeEntry() {
+        let pin = entry
+        switch currentStep {
+        case .verify:
+            if parental.verify(pin) { finish(true) } else { fail("Incorrect PIN") }
+        case .new:
+            firstEntry = pin
+            entry = ""
+            stepIndex += 1
+        case .confirm:
+            if pin == firstEntry {
+                parental.setPIN(pin)
+                finish(true)
+            } else {
+                fail("PINs didn't match — start again")
+                firstEntry = nil
+                stepIndex = steps.firstIndex(of: .new) ?? 0
+            }
+        }
+    }
+
+    private func fail(_ message: String) {
+        errorText = message
+        entry = ""
+        Haptics.medium()
+    }
+
+    private func finish(_ ok: Bool) {
+        completed = true
+        onFinished(ok)
+        dismiss()
+    }
+}
+
+// MARK: - Locked channels picker
+
+/// Every channel with a lock toggle — the parental lock list.
+struct LockedChannelsView: View {
+    @Environment(EPGStore.self) private var epg
+    @Environment(ParentalControls.self) private var parental
+    @Environment(AppSettings.self) private var settings
+    @State private var search = ""
+
+    private var channels: [EPGChannel] {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return epg.channels }
+        return epg.channels.filter { $0.name.lowercased().contains(q) }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(channels) { channel in
+                    let locked = parental.isLocked(channel.streamId)
+                    Button {
+                        parental.setLocked(channel.streamId, locked: !locked)
+                        Haptics.light()
+                    } label: {
+                        HStack {
+                            Text(channel.name)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: locked ? "lock.fill" : "lock.open")
+                                .foregroundStyle(locked ? settings.accent.color : .secondary)
+                        }
+                    }
+                }
+            } footer: {
+                Text("Locked channels ask for the parental PIN before they play. \(parental.lockedIDs.count) locked.")
+            }
+        }
+        .searchable(text: $search, prompt: "Search channels")
+        .navigationTitle("Locked Channels")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

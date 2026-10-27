@@ -26,6 +26,7 @@ struct ChannelListView: View {
     @Environment(FavoritesStore.self) private var favorites
     @Environment(AppSettings.self) private var settings
     @Environment(AuthViewModel.self) private var auth
+    @Environment(ParentalControls.self) private var parental
 
     /// On iPad, selecting a channel drives the detail column. On iPhone we push.
     @Binding var selection: EPGChannel?
@@ -49,6 +50,10 @@ struct ChannelListView: View {
     // External-player alert state.
     @State private var externalAlert: ExternalAlert?
 
+    // Parental-controls PIN gate state.
+    @State private var showPIN = false
+    @State private var pendingUnlock: (() -> Void)?
+
     struct ExternalAlert: Identifiable {
         let id = UUID()
         let title: String
@@ -56,7 +61,20 @@ struct ChannelListView: View {
     }
 
     private var visibleChannels: [EPGChannel] {
-        let base = epg.filtered(search: search, category: selectedCategory)
+        // Kids Mode wins over everything: only the Kids category,
+        // in the Favorites tab too (favorites are intersected with it).
+        if parental.kidsModeEnabled {
+            let kids = epg.filtered(search: search, category: "KIDS")
+            switch tab {
+            case .all:       return kids
+            case .favorites: return kids.filter { favorites.isFavorite($0.streamId) }
+            }
+        }
+        var base = epg.filtered(search: search, category: selectedCategory)
+        // Sports Mode with no category picked shows every sports channel.
+        if settings.sportsModeEnabled && selectedCategory == nil {
+            base = base.filter { epg.isSports($0) }
+        }
         switch tab {
         case .all:       return base
         case .favorites: return base.filter { favorites.isFavorite($0.streamId) }
@@ -106,7 +124,7 @@ struct ChannelListView: View {
                         tab == .favorites ? "No Favorites Yet" : "No Channels",
                         systemImage: tab == .favorites ? "heart" : "tv",
                         description: Text(tab == .favorites
-                            ? "Tap the star on any channel to add it here."
+                            ? "Tap the heart on any channel to add it here."
                             : "Try refreshing or adjusting your search.")
                     )
                 } else {
@@ -114,7 +132,7 @@ struct ChannelListView: View {
                         row(for: channel)
                             .tag(channel)        // for sidebar selection
                             .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 14))
-                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                 let isFav = favorites.isFavorite(channel.streamId)
                                 Button {
                                     Haptics.medium()
@@ -141,9 +159,22 @@ struct ChannelListView: View {
                   message: Text(alert.message),
                   dismissButton: .default(Text("OK")))
         }
+        .sheet(isPresented: $showPIN) {
+            PINEntryView(mode: .verify) { unlocked in
+                if unlocked { pendingUnlock?() }
+                pendingUnlock = nil
+            }
+        }
+        .simultaneousGesture(categorySwipeGesture)
         .task {
             if epg.usingFallback { await epg.refresh() }
             await favorites.reconcileWithServer()
+        }
+        .onChange(of: settings.sportsModeEnabled) { _, on in
+            // A selected non-sports category disappears in Sports Mode.
+            if on, let selectedCategory, !EPGStore.isSportsCategory(selectedCategory) {
+                self.selectedCategory = nil
+            }
         }
         .onChange(of: epg.tags) { _, newTags in
             // Drop a category selection that no longer exists.
@@ -178,7 +209,7 @@ struct ChannelListView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
             }
-            if tab == .all && !displayTags.isEmpty && !epg.usingFallback {
+            if tab == .all && !displayTags.isEmpty && !epg.usingFallback && !parental.kidsModeEnabled {
                 categoryChips
             }
         }
@@ -196,7 +227,8 @@ struct ChannelListView: View {
     private var displayTags: [EPGTag] {
         var base: [EPGTag] = []
         for tag in epg.tags where tag.parameterName != "ALL" && tag.parameterName != "FAVORITES"
-            && !epg.isCategoryHidden(tag.parameterName) {
+            && !epg.isCategoryHidden(tag.parameterName)
+            && (!settings.sportsModeEnabled || EPGStore.isSportsCategory(tag.parameterName)) {
             base.append(tag)
         }
         var result: [EPGTag] = []
@@ -214,11 +246,13 @@ struct ChannelListView: View {
     }
 
     private var categoryChips: some View {
+        ScrollViewReader { proxy in
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 chip(title: "All", isSelected: selectedCategory == nil) {
                     selectedCategory = nil
                 }
+                .id("chip-all")
                 .dropDestination(for: String.self) { items, _ in
                     // Dropping on "All" moves the category to the front.
                     guard let dragged = items.first else { return false }
@@ -230,6 +264,7 @@ struct ChannelListView: View {
                     chip(title: tag.displayName, isSelected: selectedCategory == tag.parameterName) {
                         selectedCategory = tag.parameterName
                     }
+                    .id("chip-\(tag.parameterName)")
                     .draggable(tag.parameterName)
                     .dropDestination(for: String.self) { items, _ in
                         guard let dragged = items.first, dragged != tag.parameterName else { return false }
@@ -251,6 +286,13 @@ struct ChannelListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
         }
+        .onChange(of: selectedCategory) { _, newValue in
+            // Keep the selected chip visible after swiping categories.
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(newValue.map { "chip-\($0)" } ?? "chip-all", anchor: .center)
+            }
+        }
+        }
     }
 
     private func chip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -266,7 +308,7 @@ struct ChannelListView: View {
                 .foregroundStyle(isSelected ? Color.white : Color.primary)
         }
         .buttonStyle(.plain)
-        .glassControl(cornerRadius: 999, tint: isSelected ? .accentColor : nil)
+        .glassControl(cornerRadius: 999, tint: isSelected ? settings.accent.color : nil)
     }
 
     // MARK: Rows
@@ -284,7 +326,8 @@ struct ChannelListView: View {
                 favorites.toggle(channel)
             },
             onOpenExternal: { openExternal(channel) },
-            tapToPlay: isSidebar
+            tapToPlay: isSidebar,
+            isLocked: parental.isEnabled && parental.isLocked(channel.streamId)
         )
 
         if let onChannelPicked {
@@ -292,8 +335,7 @@ struct ChannelListView: View {
             rowContent
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    Haptics.light()
-                    onChannelPicked(channel)
+                    gate(channel) { onChannelPicked(channel) }
                 }
         } else if isSidebar {
             // In split view, selection drives the detail column.
@@ -321,7 +363,8 @@ struct ChannelListView: View {
                         },
                         onOpenExternal: { openExternal(channel) },
                         tapToPlay: false,
-                        favoriteButtonInteractive: false
+                        favoriteButtonInteractive: false,
+                        isLocked: parental.isEnabled && parental.isLocked(channel.streamId)
                     )
                 }
                 .buttonStyle(.plain)
@@ -343,6 +386,10 @@ struct ChannelListView: View {
     }
 
     private func play(_ channel: EPGChannel) {
+        gate(channel) { playImmediately(channel) }
+    }
+
+    private func playImmediately(_ channel: EPGChannel) {
         Haptics.light()
         if isSidebar {
             selection = channel
@@ -353,7 +400,49 @@ struct ChannelListView: View {
         }
     }
 
+    /// Parental gate: a locked channel asks for the PIN first; the
+    /// action runs only after a correct entry.
+    private func gate(_ channel: EPGChannel, action: @escaping () -> Void) {
+        if parental.isEnabled && parental.isLocked(channel.streamId) {
+            pendingUnlock = action
+            showPIN = true
+        } else {
+            action()
+        }
+    }
+
+    // MARK: Category swiping
+
+    /// Swipe left/right across the list to move between categories
+    /// (standard paging: left = next, right = previous). Long,
+    /// horizontal-dominant drags only, so vertical scrolling and the
+    /// row swipe actions are unaffected (the leading favorite swipe no
+    /// longer full-swipes for the same reason).
+    private var categorySwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard tab == .all, onChannelPicked == nil, !parental.kidsModeEnabled else { return }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard abs(dx) > 110, abs(dx) > abs(dy) * 2.2 else { return }
+                stepCategory(forward: dx < 0)
+            }
+    }
+
+    private func stepCategory(forward: Bool) {
+        let sequence: [String?] = [nil] + displayTags.map { Optional($0.parameterName) }
+        guard let index = sequence.firstIndex(of: selectedCategory) else { return }
+        let target = forward ? index + 1 : index - 1
+        guard sequence.indices.contains(target) else { return }
+        selectedCategory = sequence[target]
+        Haptics.light()
+    }
+
     private func openExternal(_ channel: EPGChannel) {
+        gate(channel) { openExternalImmediately(channel) }
+    }
+
+    private func openExternalImmediately(_ channel: EPGChannel) {
         Task {
             do {
                 let links = try await APIClient.shared.liveLinks(streamID: channel.streamId)

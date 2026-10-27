@@ -10,6 +10,8 @@ import SwiftUI
 import Combine
 
 struct ChannelRowView: View {
+    @Environment(AppSettings.self) private var settings
+
     let channel: EPGChannel
     var isFavorite: Bool
     var now: EPGProgramme?
@@ -26,6 +28,8 @@ struct ChannelRowView: View {
     /// The iPhone list overlays its own star Button: an interactive button
     /// inside the row's play Button would swallow the row's taps.
     var favoriteButtonInteractive: Bool = true
+    /// Parental controls: locked channels show a small lock by the name.
+    var isLocked: Bool = false
 
     // A ticking clock for live progress updates.
     @State private var clock = Date()
@@ -46,6 +50,11 @@ struct ChannelRowView: View {
                     Text(channel.name)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
+                    if isLocked {
+                        Image(systemName: "lock.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     if (now?.isLive(at: clock) ?? false) {
                         LiveBadge().scaleEffect(0.8)
                     }
@@ -58,7 +67,7 @@ struct ChannelRowView: View {
 
                 if let progress = now?.progress(at: clock) {
                     ProgressView(value: progress)
-                        .tint(.accentColor)
+                        .tint(settings.accent.color)
                         .frame(height: 3)
                         .padding(.top, 1)
                 }

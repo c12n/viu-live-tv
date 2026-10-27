@@ -239,7 +239,7 @@ struct PlayerView: View {
                         Label("Try Again", systemImage: "arrow.clockwise")
                             .padding(.horizontal, 18).padding(.vertical, 10)
                     }
-                    .glassControl(cornerRadius: 12, tint: .accentColor)
+                    .glassControl(cornerRadius: 12, tint: settings.accent.color)
                     .foregroundStyle(.white)
                 }
             }
@@ -328,7 +328,7 @@ struct PlayerView: View {
                     Label("Try Again", systemImage: "arrow.clockwise")
                         .padding(.horizontal, 16).padding(.vertical, 10)
                 }
-                .glassControl(cornerRadius: 12, tint: .accentColor)
+                .glassControl(cornerRadius: 12, tint: settings.accent.color)
                 Button {
                     openExternal()
                 } label: {

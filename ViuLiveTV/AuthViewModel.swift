@@ -72,6 +72,7 @@ final class AuthViewModel {
             if case .sessionExpired = error {
                 await APIClient.shared.setToken(nil)
                 accountInfo = nil
+                ParentalControls.clearStorage()
                 subscriptionState = .unknown
                 errorMessage = "Your Viu session expired (it may have been signed in elsewhere). Please sign in again."
                 state = .signedOut
@@ -151,6 +152,7 @@ final class AuthViewModel {
         defer { isWorking = false }
         await APIClient.shared.logout()
         accountInfo = nil
+        ParentalControls.clearStorage()
         subscriptionState = .unknown
         state = .signedOut
     }

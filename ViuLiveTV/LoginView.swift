@@ -10,6 +10,7 @@ import SwiftUI
 
 struct LoginView: View {
     @Environment(AuthViewModel.self) private var auth
+    @Environment(AppSettings.self) private var settings
 
     @State private var username = ""
     @State private var password = ""
@@ -135,7 +136,7 @@ struct LoginView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
         }
-        .glassControl(cornerRadius: 14, tint: .accentColor)
+        .glassControl(cornerRadius: 14, tint: settings.accent.color)
         .foregroundStyle(.white)
         .disabled(auth.isWorking)
     }
@@ -160,7 +161,7 @@ struct LoginView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
             }
-            .glassControl(cornerRadius: 12, tint: .accentColor)
+            .glassControl(cornerRadius: 12, tint: settings.accent.color)
             .disabled(auth.isWorking || token.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding(16)
@@ -208,6 +209,7 @@ struct SubscriptionCheckingView: View {
 /// can't be used until the subscription is renewed or purchased.
 struct SubscriptionRequiredView: View {
     @Environment(AuthViewModel.self) private var auth
+    @Environment(AppSettings.self) private var settings
     @Environment(EPGStore.self) private var epg
     @Environment(\.openURL) private var openURL
     @State private var checking = false
@@ -251,7 +253,7 @@ struct SubscriptionRequiredView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                 }
-                .glassControl(cornerRadius: 14, tint: .accentColor)
+                .glassControl(cornerRadius: 14, tint: settings.accent.color)
                 .foregroundStyle(.white)
 
                 Button {
@@ -269,7 +271,7 @@ struct SubscriptionRequiredView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                 }
-                .glassControl(cornerRadius: 12, tint: .accentColor)
+                .glassControl(cornerRadius: 12, tint: settings.accent.color)
                 .disabled(checking)
 
                 Button("Sign Out", role: .destructive) {

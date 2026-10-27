@@ -389,6 +389,26 @@ final class EPGStore {
 
     /// Filter + search helper used by the list view. `category` is a tag
     /// parameter_name (a live TV category from epg_tags.php).
+    /// Sports Mode: a category counts as sports when its name contains
+    /// SPORT or it's one of the known sports categories in the lineup.
+    static func isSportsCategory(_ param: String) -> Bool {
+        if param.contains("SPORT") { return true }
+        return ["HOCKEY", "ESPN_PLUS", "TSN_PLUS", "SPORTSNET", "BEIN_SPORTS",
+                "NFL", "NBA", "MLB", "NHL", "SOCCER", "FOOTBALL", "GOLF",
+                "TENNIS", "UFC", "BOXING", "WWE", "F1", "RACING"].contains(param)
+    }
+
+    func isSports(_ channel: EPGChannel) -> Bool {
+        if let cats = channelCategories[channel.streamId],
+           cats.contains(where: Self.isSportsCategory) { return true }
+        guard let tags = channel.tags else { return false }
+        return tags.split(separator: ",").contains {
+            Self.isSportsCategory($0.trimmingCharacters(in: .whitespaces)
+                .uppercased()
+                .replacingOccurrences(of: " ", with: "_"))
+        }
+    }
+
     func filtered(search: String, category: String? = nil) -> [EPGChannel] {
         var result = channels
         if let category, !category.isEmpty {

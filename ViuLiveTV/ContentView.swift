@@ -36,6 +36,7 @@ struct ContentView: View {
         }
         .animation(.default, value: auth.state)
         .preferredColorScheme(settings.appearance.colorScheme)
+        .tint(settings.accent.color)
         .task {
             // A stored token may have been revoked since the last launch
             // (Viu revokes it when the account signs in elsewhere). Check
@@ -48,6 +49,7 @@ struct ContentView: View {
 // MARK: - Main (post-login) UI
 
 struct MainView: View {
+    @Environment(AppSettings.self) private var settings
     @State private var selection: EPGChannel?
     @State private var showSettings = false
     @State private var tab: ChannelTab = .all
@@ -111,8 +113,11 @@ struct MainView: View {
                     .padding(.bottom, 2)
                 }
         }
-        // Tactile tick whenever a channel is opened (path push).
-        .sensoryFeedback(.impact(weight: .light), trigger: path)
+        // Tactile tick whenever a channel is opened (path push) — only
+        // when haptics are enabled in Settings.
+        .sensoryFeedback(trigger: path) { _, _ in
+            settings.hapticsEnabled ? .impact(weight: .light) : nil
+        }
         .sheet(isPresented: $showSettings) { SettingsView() }
     }
 
@@ -135,6 +140,7 @@ struct MainView: View {
 /// above the bottom edge, with the selected item highlighted by a filled
 /// capsule. Items: Channels, Favorites, Settings (opens the sheet).
 struct FloatingTabBar: View {
+    @Environment(AppSettings.self) private var settings
     @Binding var tab: ChannelTab
     var onSettings: () -> Void
 
@@ -175,7 +181,7 @@ struct FloatingTabBar: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .background(tab == target ? Color.accentColor : Color.clear, in: Capsule())
+            .background(tab == target ? settings.accent.color : Color.clear, in: Capsule())
             .foregroundStyle(tab == target ? Color.white : Color.secondary)
             .contentShape(Rectangle())
         }

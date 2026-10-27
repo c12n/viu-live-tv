@@ -15,13 +15,21 @@ import UIKit
 
 /// Light tactile feedback for taps on channels and the live player.
 enum Haptics {
+    /// Settings → Haptic Feedback toggle (default on). Read straight from
+    /// UserDefaults so every call site is gated without plumbing.
+    private static var enabled: Bool {
+        UserDefaults.standard.object(forKey: "viu_haptics_enabled") as? Bool ?? true
+    }
+
     static func light() {
+        guard enabled else { return }
         let g = UIImpactFeedbackGenerator(style: .light)
         g.prepare()
         g.impactOccurred()
     }
 
     static func medium() {
+        guard enabled else { return }
         let g = UIImpactFeedbackGenerator(style: .medium)
         g.prepare()
         g.impactOccurred()
@@ -105,10 +113,12 @@ struct GlassGroup<Content: View>: View {
 // MARK: - Live badge
 
 struct LiveBadge: View {
+    @Environment(AppSettings.self) private var settings
+
     var body: some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(.red)
+                .fill(settings.accent.color)
                 .frame(width: 7, height: 7)
             Text("LIVE")
                 .font(.caption2.weight(.bold))
@@ -116,7 +126,7 @@ struct LiveBadge: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .glassControl(cornerRadius: 8, tint: .red)
+        .glassControl(cornerRadius: 8, tint: settings.accent.color)
         .foregroundStyle(.primary)
         .accessibilityLabel("Live now")
     }
