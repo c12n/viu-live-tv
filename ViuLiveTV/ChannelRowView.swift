@@ -78,11 +78,13 @@ struct ChannelRowView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
-            } else {
-                starImage
             }
+            // Non-interactive mode: no star here at all — the list overlays
+            // its own star button (an indicator + overlay rendered as a
+            // doubled star). Trailing padding below reserves its space.
         }
         .padding(.vertical, 3)
+        .padding(.trailing, favoriteButtonInteractive ? 0 : 26)
         .contentShape(Rectangle())
         .modifier(TapToPlayModifier(enabled: tapToPlay, action: onPlay))
         .onReceive(timer) { clock = $0 }

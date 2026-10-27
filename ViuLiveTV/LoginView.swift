@@ -135,7 +135,7 @@ struct LoginView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
         }
-        .background(.tint, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .glassControl(cornerRadius: 14, tint: .accentColor)
         .foregroundStyle(.white)
         .disabled(auth.isWorking)
     }
@@ -251,7 +251,7 @@ struct SubscriptionRequiredView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                 }
-                .background(.tint, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .glassControl(cornerRadius: 14, tint: .accentColor)
                 .foregroundStyle(.white)
 
                 Button {

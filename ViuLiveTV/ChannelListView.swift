@@ -157,6 +157,13 @@ struct ChannelListView: View {
                 self.selectedCategory = nil
             }
         }
+        .onChange(of: tab) { _, newTab in
+            // Categories belong to the Channels tab; Favorites shows all
+            // favorites regardless of any category picked earlier.
+            if newTab == .favorites {
+                self.selectedCategory = nil
+            }
+        }
     }
 
     // MARK: Top inset (iPad picker + category chips)
@@ -171,7 +178,7 @@ struct ChannelListView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
             }
-            if !displayTags.isEmpty && !epg.usingFallback {
+            if tab == .all && !displayTags.isEmpty && !epg.usingFallback {
                 categoryChips
             }
         }
@@ -254,13 +261,12 @@ struct ChannelListView: View {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(isSelected ? Color.accentColor : Color(.secondarySystemBackground),
-                            in: Capsule())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
                 .foregroundStyle(isSelected ? Color.white : Color.primary)
         }
         .buttonStyle(.plain)
+        .glassControl(cornerRadius: 999, tint: isSelected ? .accentColor : nil)
     }
 
     // MARK: Rows
@@ -327,7 +333,7 @@ struct ChannelListView: View {
                     Image(systemName: favorites.isFavorite(channel.streamId) ? "star.fill" : "star")
                         .foregroundStyle(favorites.isFavorite(channel.streamId) ? Color.yellow : Color.secondary)
                         .font(.body)
-                        .padding(10)
+                        .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

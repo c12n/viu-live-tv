@@ -169,6 +169,8 @@ struct PlayerView: View {
             } else if let url = model.streamURL {
                 AVPlayerContainer(url: url, generation: model.linkGeneration,
                                   title: model.displayName,
+                                  pipEnabled: settings.pictureInPictureEnabled,
+                                  backgroundEnabled: settings.backgroundPlayEnabled,
                                   control: control,
                                   onPlaybackError: { model.handlePlaybackFailure($0) })
                     .ignoresSafeArea()
@@ -196,7 +198,9 @@ struct PlayerView: View {
                             }
                             .glassControl(cornerRadius: 20, tint: .black)
                             .foregroundStyle(.white)
-                            .padding(.top, 10)
+                            // Low enough to clear the native player's own top
+                            // control bar (AirPlay / PiP / volume live there).
+                            .padding(.top, 58)
                             .padding(.leading, 12)
                             .transition(.opacity)
                         }
@@ -371,6 +375,9 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
     var generation: Int = 0
     /// Channel name for the Now Playing info (lock screen / Control Centre).
     var title: String = ""
+    /// Settings toggles: Picture in Picture and background play.
+    var pipEnabled: Bool = true
+    var backgroundEnabled: Bool = true
     /// Receives the AVPlayer so SwiftUI gestures can pause/resume it.
     var control: PlayerControl?
     var onPlaybackError: ((String) -> Void)?
@@ -398,8 +405,8 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
 
         let vc = AVPlayerViewController()
         vc.player = player
-        vc.allowsPictureInPicturePlayback = true
-        vc.canStartPictureInPictureAutomaticallyFromInline = true
+        vc.allowsPictureInPicturePlayback = pipEnabled
+        vc.canStartPictureInPictureAutomaticallyFromInline = pipEnabled
         vc.showsPlaybackControls = true
         vc.videoGravity = .resizeAspect
         vc.delegate = context.coordinator
@@ -426,6 +433,7 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         // Control Centre play-pause commands, which is what lets audio
         // keep playing with the screen locked and lets PiP start
         // automatically when the app is backgrounded.
+        if backgroundEnabled {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .moviePlayback)
@@ -449,6 +457,16 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
             return .success
         }
         context.coordinator.remoteTargets = [playTarget, pauseTarget]
+        } else {
+            // Background Play is off in Settings: pause as soon as the
+            // app leaves the foreground instead of playing on.
+            context.coordinator.backgroundObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification,
+                object: nil, queue: .main
+            ) { _ in
+                player.pause()
+            }
+        }
 
         player.play()
         return vc
@@ -477,6 +495,10 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
             commands.pauseCommand.removeTarget(target)
         }
         coordinator.remoteTargets = []
+        if let observer = coordinator.backgroundObserver {
+            NotificationCenter.default.removeObserver(observer)
+            coordinator.backgroundObserver = nil
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         uiViewController.player?.pause()
         uiViewController.player = nil
@@ -491,6 +513,7 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         var timeObserverToken: Any?
         weak var observedPlayer: AVPlayer?
         var remoteTargets: [Any] = []
+        var backgroundObserver: NSObjectProtocol?
 
         init(onPlaybackError: ((String) -> Void)?) {
             self.onPlaybackError = onPlaybackError

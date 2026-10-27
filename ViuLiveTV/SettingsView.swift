@@ -44,10 +44,18 @@ struct SettingsView: View {
                             }.tag(choice)
                         }
                     }
+                    Toggle("Background Play", isOn: Binding(
+                        get: { settingsStore.backgroundPlayEnabled },
+                        set: { settingsStore.backgroundPlayEnabled = $0 }
+                    ))
+                    Toggle("Picture in Picture", isOn: Binding(
+                        get: { settingsStore.pictureInPictureEnabled },
+                        set: { settingsStore.pictureInPictureEnabled = $0 }
+                    ))
                 } header: {
                     Text("Playback")
                 } footer: {
-                    Text("'Open in external player' on a channel uses this app. A green check means the app looks installed.")
+                    Text("'Open in external player' on a channel uses this app. A green check means the app looks installed. Background Play keeps the audio playing when you leave the app or lock the screen; Picture in Picture lets the video float over other apps.")
                 }
 
                 categoriesSection
