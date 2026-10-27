@@ -169,6 +169,8 @@ final class ParentalControls {
         static let locked = "viu_locked_channel_ids"
         static let kidsMode = "viu_kids_mode"
         static let pinAccount = "parental_pin"
+        static let resetCode = "viu_pin_reset_code"
+        static let resetCodeAt = "viu_pin_reset_code_at"
     }
 
     init() {
@@ -186,12 +188,51 @@ final class ParentalControls {
         lockedIDs = Set(UserDefaults.standard.array(forKey: Keys.locked) as? [Int] ?? [])
     }
 
-    var hasPIN: Bool { Keychain.shared.get(account: Keys.pinAccount) != nil }
+    /// The PIN every install starts with. It is also the PIN after an
+    /// uninstall (a fresh install has nothing stored) and after a reset.
+    static let defaultPIN = "0000"
+
+    var hasCustomPIN: Bool { Keychain.shared.get(account: Keys.pinAccount) != nil }
+    var isDefaultPIN: Bool { !hasCustomPIN }
 
     func setPIN(_ pin: String) { Keychain.shared.set(pin, account: Keys.pinAccount) }
 
-    func verify(_ pin: String) -> Bool {
-        Keychain.shared.get(account: Keys.pinAccount) == pin
+    /// The PIN that currently works: the stored one, or the default
+    /// 0000 when none was ever set on this install.
+    private var effectivePIN: String {
+        Keychain.shared.get(account: Keys.pinAccount) ?? Self.defaultPIN
+    }
+
+    func verify(_ pin: String) -> Bool { effectivePIN == pin }
+
+    // MARK: Forgot-PIN reset codes
+
+    /// Generates a 6-digit reset code (valid 10 minutes). The PIN screen
+    /// emails it to the Viu account email; entering it resets the PIN
+    /// back to the default 0000.
+    func requestResetCode() -> String {
+        let code = String(format: "%06d", Int.random(in: 0...999_999))
+        UserDefaults.standard.set(code, forKey: Keys.resetCode)
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Keys.resetCodeAt)
+        return code
+    }
+
+    func verifyResetCode(_ code: String) -> Bool {
+        guard let stored = UserDefaults.standard.string(forKey: Keys.resetCode) else { return false }
+        let age = Date().timeIntervalSince1970 - UserDefaults.standard.double(forKey: Keys.resetCodeAt)
+        return stored == code && age < 600
+    }
+
+    func clearResetCode() {
+        UserDefaults.standard.removeObject(forKey: Keys.resetCode)
+        UserDefaults.standard.removeObject(forKey: Keys.resetCodeAt)
+    }
+
+    /// Back to the factory default (deleting the stored PIN makes the
+    /// effective PIN 0000 again).
+    func resetPINToDefault() {
+        Keychain.shared.delete(account: Keys.pinAccount)
+        clearResetCode()
     }
 
     func isLocked(_ streamID: Int) -> Bool { lockedIDs.contains(streamID) }

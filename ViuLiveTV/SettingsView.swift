@@ -8,6 +8,7 @@
 
 import SwiftUI
 import UIKit
+import MessageUI
 
 struct SettingsView: View {
     @Environment(AuthViewModel.self) private var auth
@@ -196,7 +197,7 @@ struct SettingsView: View {
                 get: { parental.isEnabled },
                 set: { newValue in
                     if newValue {
-                        if parental.hasPIN { parental.isEnabled = true }
+                        if !parental.isDefaultPIN { parental.isEnabled = true }
                         else { pinFlow = PINFlow(mode: .setup) { parental.isEnabled = true } }
                     } else {
                         pinFlow = PINFlow(mode: .verify) { parental.isEnabled = false }
@@ -222,7 +223,7 @@ struct SettingsView: View {
                 get: { parental.kidsModeEnabled },
                 set: { newValue in
                     if newValue {
-                        if parental.hasPIN { parental.kidsModeEnabled = true }
+                        if !parental.isDefaultPIN { parental.kidsModeEnabled = true }
                         else { pinFlow = PINFlow(mode: .setup) { parental.kidsModeEnabled = true } }
                     } else {
                         pinFlow = PINFlow(mode: .verify) { parental.kidsModeEnabled = false }
@@ -232,7 +233,7 @@ struct SettingsView: View {
         } header: {
             Text("Parental Controls")
         } footer: {
-            Text("Locked channels ask for a 4-digit PIN before they play, and a lock icon shows next to locked channels in the lists and search. Kids Mode limits the app to the Kids category — the PIN is only needed to turn Kids Mode off (if no PIN exists yet, you create one when you turn it on). Forgot your PIN? Sign out and sign back in to reset parental controls.")
+            Text("Locked channels ask for a 4-digit PIN before they play, and a lock icon shows next to locked channels in the lists and search. Kids Mode limits the app to the Kids category — the PIN is only needed to turn Kids Mode off. The PIN starts as 0000 (you set your own when you turn parental controls on); Forgot PIN on the PIN screen emails a reset code to your Viu account email and resets the PIN to 0000. Signing out and back in, or reinstalling the app, also resets the PIN to 0000.")
         }
     }
 
@@ -453,12 +454,19 @@ struct PINFlow: Identifiable {
     let onSuccess: () -> Void
 }
 
-/// 4-digit PIN pad for parental controls: verifying (locked channel,
-/// turning a mode or the controls off), setting a first PIN, or
-/// changing an existing PIN (verify current, then enter + confirm).
+/// PIN pad for parental controls, styled after the iOS passcode
+/// screen: black background, outlined dots that fill as you type,
+/// round glass keys, Forgot PIN bottom-left, Cancel bottom-right.
+/// Modes: verifying (locked channel, turning a mode or the controls
+/// off), setting a first PIN, or changing an existing PIN (verify
+/// current, then enter + confirm). Verify mode also offers the
+/// forgot-PIN reset: a 6-digit code is emailed to the Viu account
+/// email (via the device's Mail app — a standalone app has no mail
+/// server of its own) and entering it resets the PIN to 0000.
 struct PINEntryView: View {
     @Environment(ParentalControls.self) private var parental
     @Environment(AppSettings.self) private var settings
+    @Environment(AuthViewModel.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
     let mode: PINEntryMode
@@ -468,7 +476,14 @@ struct PINEntryView: View {
     @State private var firstEntry: String?
     @State private var stepIndex = 0
     @State private var errorText: String?
+    @State private var infoText: String?
     @State private var completed = false
+
+    private enum Screen { case pin, forgot, code }
+    @State private var screen: Screen = .pin
+    @State private var codeEntry = ""
+    @State private var pendingCode = ""
+    @State private var showMail = false
 
     private enum Step { case verify, new, confirm }
 
@@ -483,10 +498,15 @@ struct PINEntryView: View {
     private var currentStep: Step { steps[min(stepIndex, steps.count - 1)] }
 
     private var title: String {
-        switch currentStep {
-        case .verify:  return "Enter PIN"
-        case .new:     return mode == .change ? "Enter New PIN" : "Create a PIN"
-        case .confirm: return "Confirm PIN"
+        switch screen {
+        case .forgot: return "Reset PIN"
+        case .code:   return "Enter Reset Code"
+        case .pin:
+            switch currentStep {
+            case .verify:  return "Enter PIN"
+            case .new:     return mode == .change ? "Enter New PIN" : "Create a PIN"
+            case .confirm: return "Confirm PIN"
+            }
         }
     }
 
@@ -498,73 +518,241 @@ struct PINEntryView: View {
         }
     }
 
+    private var accountEmail: String {
+        auth.accountInfo?.username ?? auth.username
+    }
+
+    private var mailAvailable: Bool { MFMailComposeViewController.canSendMail() }
+
     var body: some View {
-        VStack(spacing: 22) {
-            Spacer()
-            Image(systemName: "lock.fill")
-                .font(.largeTitle)
-                .foregroundStyle(settings.accent.color)
-            Text(title)
-                .font(.title3.bold())
-            Text(errorText ?? subtitle)
-                .font(.subheadline)
-                .foregroundStyle(errorText == nil ? Color.secondary : Color.red)
-                .multilineTextAlignment(.center)
-            HStack(spacing: 16) {
-                ForEach(0..<4, id: \.self) { i in
-                    Circle()
-                        .fill(i < entry.count ? settings.accent.color : Color.secondary.opacity(0.3))
-                        .frame(width: 14, height: 14)
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 0) {
+                Spacer(minLength: 24)
+                switch screen {
+                case .pin:    pinContent
+                case .forgot: forgotContent
+                case .code:   codeContent
+                }
+                Spacer(minLength: 16)
+                bottomRow
+            }
+            .padding(.horizontal, 30)
+            .padding(.bottom, 12)
+        }
+        .preferredColorScheme(.dark)
+        .presentationBackground(.black)
+        .onDisappear { if !completed { onFinished(false) } }
+        .sheet(isPresented: $showMail) {
+            if mailAvailable {
+                MailComposeView(
+                    recipient: accountEmail,
+                    subject: "Viu Live TV — PIN reset code",
+                    body: "Your Viu Live TV parental-controls reset code is \(pendingCode).\n\nEnter it in the app within 10 minutes to reset your parental PIN to the default 0000."
+                ) { result in
+                    showMail = false
+                    if result == .sent {
+                        codeEntry = ""
+                        errorText = nil
+                        screen = .code
+                    } else {
+                        parental.clearResetCode()
+                        errorText = "The email wasn't sent — try again."
+                    }
                 }
             }
-            keypad
-            Button("Cancel") { finish(false) }
-                .foregroundStyle(.secondary)
-            Spacer()
         }
-        .padding()
-        .onDisappear { if !completed { onFinished(false) } }
+    }
+
+    // MARK: Screens
+
+    private var pinContent: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(.white)
+            Text(title)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+            Text(errorText ?? infoText ?? subtitle)
+                .font(.subheadline)
+                .foregroundStyle(errorText != nil ? Color.red : Color.white.opacity(0.6))
+                .multilineTextAlignment(.center)
+                .frame(minHeight: 40)
+            dots(count: 4, filled: entry.count)
+            keypad
+                .padding(.top, 6)
+        }
+    }
+
+    private var forgotContent: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "envelope.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(.white)
+            Text(title)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+            Text(errorText ?? "We'll email a 6-digit reset code to the email address used for your Viu account\(accountEmail.isEmpty ? "" : " (\(accountEmail))"). Entering the code resets your PIN to the default 0000.")
+                .font(.subheadline)
+                .foregroundStyle(errorText != nil ? Color.red : Color.white.opacity(0.6))
+                .multilineTextAlignment(.center)
+                .frame(minHeight: 60)
+            if mailAvailable {
+                Button {
+                    pendingCode = parental.requestResetCode()
+                    showMail = true
+                } label: {
+                    Text("Email Me a Reset Code")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 12)
+                }
+                .glassControl(cornerRadius: 24, tint: settings.accent.color)
+                .buttonStyle(.plain)
+            } else {
+                Text("Mail isn't set up on this device, so a code can't be emailed. You can also reset parental controls by signing out and signing back in.")
+                    .font(.footnote)
+                    .foregroundStyle(Color.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    private var codeContent: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(.white)
+            Text(title)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+            Text(errorText ?? "Enter the 6-digit code from the email. Your PIN resets to 0000.")
+                .font(.subheadline)
+                .foregroundStyle(errorText != nil ? Color.red : Color.white.opacity(0.6))
+                .multilineTextAlignment(.center)
+                .frame(minHeight: 40)
+            dots(count: 6, filled: codeEntry.count)
+            keypad
+                .padding(.top, 6)
+        }
+    }
+
+    private var bottomRow: some View {
+        HStack {
+            if screen == .pin {
+                if mode == .verify {
+                    Button("Forgot PIN?") {
+                        errorText = nil
+                        screen = .forgot
+                        Haptics.light()
+                    }
+                } else {
+                    Color.clear.frame(width: 44, height: 20)
+                }
+            } else {
+                Button("Back") {
+                    errorText = nil
+                    screen = .pin
+                }
+            }
+            Spacer()
+            Button("Cancel") { finish(false) }
+        }
+        .font(.body)
+        .foregroundStyle(.white)
+    }
+
+    // MARK: Keypad & dots
+
+    private func dots(count: Int, filled: Int) -> some View {
+        HStack(spacing: 16) {
+            ForEach(0..<count, id: \.self) { i in
+                Circle()
+                    .fill(i < filled ? Color.white : Color.clear)
+                    .frame(width: 13, height: 13)
+                    .overlay { Circle().stroke(Color.white, lineWidth: 1.2) }
+            }
+        }
     }
 
     private var keypad: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(80), spacing: 24), count: 3), spacing: 14) {
             ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"], id: \.self) { key in
                 Button { tap(key) } label: {
                     Group {
                         if key == "del" {
                             Image(systemName: "delete.left")
+                                .font(.title3)
                         } else {
-                            Text(key).font(.title2.weight(.medium))
+                            VStack(spacing: 0) {
+                                Text(key)
+                                    .font(.system(size: 32, weight: .regular))
+                                if let letters = Self.keyLetters[key] {
+                                    Text(letters)
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .kerning(1.6)
+                                }
+                            }
                         }
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .glassControl(cornerRadius: 28)
+                    .foregroundStyle(.white)
+                    .frame(width: 80, height: 80)
+                    .glassControl(cornerRadius: 40)
                 }
                 .buttonStyle(.plain)
                 .disabled(key.isEmpty)
                 .opacity(key.isEmpty ? 0 : 1)
             }
         }
-        .frame(maxWidth: 300)
+        .frame(maxWidth: 320)
     }
 
+    private static let keyLetters: [String: String] = [
+        "2": "ABC", "3": "DEF", "4": "GHI", "5": "JKL",
+        "6": "MNO", "7": "PQRS", "8": "TUV", "9": "WXYZ",
+    ]
+
     private func tap(_ key: String) {
-        if key == "del" {
-            if !entry.isEmpty { entry.removeLast() }
-            return
-        }
-        guard entry.count < 4 else { return }
-        entry.append(key)
-        errorText = nil
-        Haptics.light()
-        if entry.count == 4 {
-            Task {
-                try? await Task.sleep(for: .milliseconds(160))
-                completeEntry()
+        switch screen {
+        case .pin:
+            if key == "del" {
+                if !entry.isEmpty { entry.removeLast() }
+                return
             }
+            guard entry.count < 4 else { return }
+            entry.append(key)
+            errorText = nil
+            infoText = nil
+            Haptics.light()
+            if entry.count == 4 {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(160))
+                    completeEntry()
+                }
+            }
+        case .code:
+            if key == "del" {
+                if !codeEntry.isEmpty { codeEntry.removeLast() }
+                return
+            }
+            guard codeEntry.count < 6 else { return }
+            codeEntry.append(key)
+            errorText = nil
+            Haptics.light()
+            if codeEntry.count == 6 {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(160))
+                    completeCode()
+                }
+            }
+        case .forgot:
+            break
         }
     }
+
+    // MARK: Completion
 
     private func completeEntry() {
         let pin = entry
@@ -587,6 +775,21 @@ struct PINEntryView: View {
         }
     }
 
+    private func completeCode() {
+        if parental.verifyResetCode(codeEntry) {
+            parental.resetPINToDefault()
+            codeEntry = ""
+            errorText = nil
+            infoText = "PIN reset — your PIN is now 0000. Enter it to continue."
+            screen = .pin
+            Haptics.medium()
+        } else {
+            errorText = "That code isn't right, or it has expired."
+            codeEntry = ""
+            Haptics.medium()
+        }
+    }
+
     private func fail(_ message: String) {
         errorText = message
         entry = ""
@@ -597,6 +800,41 @@ struct PINEntryView: View {
         completed = true
         onFinished(ok)
         dismiss()
+    }
+}
+
+// MARK: - Mail compose
+
+/// Minimal MFMailComposeViewController wrapper — used by the
+/// forgot-PIN flow to email the reset code to the account email.
+struct MailComposeView: UIViewControllerRepresentable {
+    let recipient: String
+    let subject: String
+    let body: String
+    var onResult: (MFMailComposeResult) -> Void
+
+    func makeUIViewController(context: Context) -> MFMailComposeViewController {
+        let vc = MFMailComposeViewController()
+        vc.setToRecipients([recipient])
+        vc.setSubject(subject)
+        vc.setMessageBody(body, isHTML: false)
+        vc.mailComposeDelegate = context.coordinator
+        return vc
+    }
+
+    func updateUIViewController(_ vc: MFMailComposeViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onResult: onResult) }
+
+    final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
+        let onResult: (MFMailComposeResult) -> Void
+        init(onResult: @escaping (MFMailComposeResult) -> Void) { self.onResult = onResult }
+        func mailComposeController(_ controller: MFMailComposeViewController,
+                                   didFinishWith result: MFMailComposeResult,
+                                   error: Error?) {
+            controller.dismiss(animated: true)
+            onResult(result)
+        }
     }
 }
 
