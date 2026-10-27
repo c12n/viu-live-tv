@@ -9,6 +9,24 @@
 //
 
 import SwiftUI
+import UIKit
+
+// MARK: - Haptics
+
+/// Light tactile feedback for taps on channels and the live player.
+enum Haptics {
+    static func light() {
+        let g = UIImpactFeedbackGenerator(style: .light)
+        g.prepare()
+        g.impactOccurred()
+    }
+
+    static func medium() {
+        let g = UIImpactFeedbackGenerator(style: .medium)
+        g.prepare()
+        g.impactOccurred()
+    }
+}
 
 // MARK: - Card background
 

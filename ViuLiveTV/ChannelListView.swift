@@ -38,6 +38,9 @@ struct ChannelListView: View {
     /// setting `selection` alone never navigated on iPhone, which made the
     /// menu's Play button a no-op.
     var onPlayRequest: ((EPGChannel) -> Void)?
+    /// Channel-guide mode (over the playing video): a row tap picks the
+    /// channel instead of navigating.
+    var onChannelPicked: ((EPGChannel) -> Void)?
 
     @State private var search = ""
     /// Selected live TV category (tag parameter_name); nil = All.
@@ -114,6 +117,7 @@ struct ChannelListView: View {
                             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                 let isFav = favorites.isFavorite(channel.streamId)
                                 Button {
+                                    Haptics.medium()
                                     favorites.toggle(channel)
                                 } label: {
                                     Label(isFav ? "Unfavorite" : "Favorite",
@@ -199,7 +203,10 @@ struct ChannelListView: View {
     }
 
     private func chip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            Haptics.light()
+            action()
+        } label: {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
@@ -222,12 +229,23 @@ struct ChannelListView: View {
             now: epg.now(for: channel),
             next: epg.next(for: channel),
             onPlay: { play(channel) },
-            onToggleFavorite: { favorites.toggle(channel) },
+            onToggleFavorite: {
+                Haptics.medium()
+                favorites.toggle(channel)
+            },
             onOpenExternal: { openExternal(channel) },
             tapToPlay: isSidebar
         )
 
-        if isSidebar {
+        if let onChannelPicked {
+            // Channel guide over the player: tap picks, no navigation.
+            rowContent
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    Haptics.light()
+                    onChannelPicked(channel)
+                }
+        } else if isSidebar {
             // In split view, selection drives the detail column.
             rowContent
         } else {
@@ -237,6 +255,7 @@ struct ChannelListView: View {
     }
 
     private func play(_ channel: EPGChannel) {
+        Haptics.light()
         if isSidebar {
             selection = channel
         } else if let onPlayRequest {

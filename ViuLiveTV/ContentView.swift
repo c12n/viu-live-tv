@@ -102,6 +102,8 @@ struct MainView: View {
                     .padding(.bottom, 2)
                 }
         }
+        // Tactile tick whenever a channel is opened (path push).
+        .sensoryFeedback(.impact(weight: .light), trigger: path)
         .sheet(isPresented: $showSettings) { SettingsView() }
     }
 

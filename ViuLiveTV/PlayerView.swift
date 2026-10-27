@@ -22,7 +22,7 @@ let viuPlaybackLog = Logger(subsystem: "com.c12n.viulivetv", category: "playback
 @Observable
 @MainActor
 final class PlayerModel {
-    let channel: EPGChannel
+    var channel: EPGChannel
     var streamURL: URL?
     var isLoading = true
     var errorMessage: String?
@@ -107,12 +107,51 @@ final class PlayerModel {
         playbackError = nil
         Task { await loadLink() }
     }
+
+    /// Switch to a different channel in place (channel guide picks).
+    func switchChannel(_ newChannel: EPGChannel) {
+        channel = newChannel
+        displayName = newChannel.name
+        autoRetried = false
+        playbackError = nil
+        errorMessage = nil
+        streamURL = nil
+        Task { await loadLink() }
+    }
+}
+
+// MARK: - Player control handle
+
+/// Lets SwiftUI gestures reach the AVPlayer owned by AVPlayerContainer
+/// (double-tap to pause/resume). Not observed — just a shared handle.
+final class PlayerControl {
+    weak var player: AVPlayer?
+
+    var isPlaying: Bool {
+        guard let player else { return false }
+        return player.timeControlStatus == .playing || player.rate > 0
+    }
+
+    func togglePlayPause() {
+        guard let player else { return }
+        if isPlaying { player.pause() } else { player.play() }
+    }
 }
 
 // MARK: - SwiftUI player screen
 
 struct PlayerView: View {
     @State private var model: PlayerModel
+    @State private var control = PlayerControl()
+    /// Minimal auto-hiding chrome: only the channel-guide button, shown
+    /// briefly on open and on tap, then gone — otherwise the screen is
+    /// purely the video.
+    @State private var chromeVisible = true
+    @State private var chromeHideTask: Task<Void, Never>?
+    @State private var showGuide = false
+    @State private var guideTab: ChannelTab = .all
+    /// Brief centre play/pause flash after a double-tap (true = resumed).
+    @State private var toggleFlash: Bool?
     @Environment(\.dismiss) private var dismiss
     @Environment(AppSettings.self) private var settings
 
@@ -128,17 +167,46 @@ struct PlayerView: View {
                 playbackErrorPanel(err)
             } else if let url = model.streamURL {
                 AVPlayerContainer(url: url, generation: model.linkGeneration,
+                                  control: control,
                                   onPlaybackError: { model.handlePlaybackFailure($0) })
                     .ignoresSafeArea()
-                    .overlay(alignment: .topTrailing) {
-                        // Explicit AirPlay route picker (the player controls
-                        // also offer one); external playback is enabled on
-                        // the AVPlayer itself.
-                        AirPlayButton()
-                            .frame(width: 44, height: 44)
-                            .glassControl(cornerRadius: 22, tint: .black)
-                            .padding(.top, 8)
-                            .padding(.trailing, 12)
+                    // Single tap: light haptic + show the guide chrome.
+                    .simultaneousGesture(TapGesture().onEnded {
+                        Haptics.light()
+                        showChrome()
+                    })
+                    // Double tap: pause / resume the live stream.
+                    .simultaneousGesture(TapGesture(count: 2).onEnded {
+                        control.togglePlayPause()
+                        Haptics.medium()
+                        flashToggle()
+                    })
+                    .overlay(alignment: .topLeading) {
+                        if chromeVisible {
+                            Button {
+                                Haptics.light()
+                                showGuide = true
+                            } label: {
+                                Label("Guide", systemImage: "list.bullet")
+                                    .font(.callout.weight(.semibold))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 9)
+                            }
+                            .glassControl(cornerRadius: 20, tint: .black)
+                            .foregroundStyle(.white)
+                            .padding(.top, 10)
+                            .padding(.leading, 12)
+                            .transition(.opacity)
+                        }
+                    }
+                    .overlay {
+                        if let toggleFlash {
+                            Image(systemName: toggleFlash ? "play.fill" : "pause.fill")
+                                .font(.system(size: 54, weight: .bold))
+                                .foregroundStyle(.white)
+                                .shadow(color: .black.opacity(0.6), radius: 12)
+                                .transition(.opacity)
+                        }
                     }
             } else if model.isLoading {
                 VStack(spacing: 14) {
@@ -170,35 +238,61 @@ struct PlayerView: View {
                 }
             }
         }
-        // No channel-name title over the video (requested) — the name still
-        // shows in the list, the loading state and error messages.
+        // The player screen is only the video: no channel-name title, no
+        // LIVE badge, no nav bar, no permanent buttons. The single Guide
+        // button fades in on tap and auto-hides. Back to the channel list =
+        // swipe right from the left edge of the screen.
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                        openExternal()
-                    } label: {
-                        Label("Open in External Player", systemImage: "arrow.up.forward.app")
-                    }
-                    .disabled(model.streamURL == nil)
-                    Button {
-                        if let url = model.streamURL {
-                            ExternalPlayerLauncher.presentShareSheet(urlString: url.absoluteString)
-                        }
-                    } label: {
-                        Label("Share Stream Link", systemImage: "square.and.arrow.up")
-                    }
-                    .disabled(model.streamURL == nil)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .foregroundStyle(.white)
+        .toolbar(.hidden, for: .navigationBar)
+        .simultaneousGesture(edgeSwipeBackGesture)
+        .sheet(isPresented: $showGuide) {
+            ChannelGuideSheet(tab: $guideTab) { picked in
+                showGuide = false
+                if picked.streamId != model.channel.streamId {
+                    model.switchChannel(picked)
+                    showChrome()
                 }
             }
         }
-        .task { await model.loadLink() }
+        .task {
+            showChrome()
+            await model.loadLink()
+        }
+    }
+
+    /// Swipe right starting from the left screen edge → back to the list.
+    private var edgeSwipeBackGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .local)
+            .onEnded { value in
+                guard value.startLocation.x < 28,
+                      value.translation.width > 70,
+                      abs(value.translation.height) < 45 else { return }
+                Haptics.light()
+                dismiss()
+            }
+    }
+
+    /// Show the Guide chrome and restart its auto-hide timer.
+    private func showChrome() {
+        withAnimation(.easeInOut(duration: 0.2)) { chromeVisible = true }
+        chromeHideTask?.cancel()
+        chromeHideTask = Task {
+            try? await Task.sleep(nanoseconds: 3_500_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.25)) { chromeVisible = false }
+            }
+        }
+    }
+
+    /// Flash a big play/pause glyph briefly after a double-tap.
+    private func flashToggle() {
+        toggleFlash = control.isPlaying
+        Task {
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            await MainActor.run { toggleFlash = nil }
+        }
     }
 
     private func openExternal() {
@@ -242,6 +336,30 @@ struct PlayerView: View {
     }
 }
 
+// MARK: - Channel guide sheet
+
+/// The channel guide over the player: the full channel list in a sheet.
+/// Picking a channel switches playback in place; Done returns to the video.
+struct ChannelGuideSheet: View {
+    @Binding var tab: ChannelTab
+    var onPick: (EPGChannel) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ChannelListView(selection: .constant(nil), tab: $tab,
+                            onChannelPicked: onPick)
+                .navigationTitle("Channel Guide")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
+                }
+        }
+    }
+}
+
 // MARK: - AVPlayerViewController bridge
 
 struct AVPlayerContainer: UIViewControllerRepresentable {
@@ -249,6 +367,8 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
     /// Changes whenever a fresh live link was fetched; forces an item swap
     /// even when the URL string itself is unchanged.
     var generation: Int = 0
+    /// Receives the AVPlayer so SwiftUI gestures can pause/resume it.
+    var control: PlayerControl?
     var onPlaybackError: ((String) -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator(onPlaybackError: onPlaybackError) }
@@ -293,6 +413,7 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         }
         context.coordinator.timeObserverToken = token
         context.coordinator.observedPlayer = player
+        control?.player = player
         player.play()
         return vc
     }
@@ -423,18 +544,4 @@ struct PlaybackTestView: View {
             viuPlaybackLog.info("VIU_PLAYBACK opening player stream=\(sid, privacy: .public)")
         }
     }
-}
-
-// MARK: - AirPlay route picker (SwiftUI wrapper)
-
-struct AirPlayButton: UIViewRepresentable {
-    func makeUIView(context: Context) -> AVRoutePickerView {
-        let v = AVRoutePickerView()
-        v.prioritizesVideoDevices = true
-        v.tintColor = UIColor.white
-        v.activeTintColor = UIColor.systemRed
-        v.backgroundColor = .clear
-        return v
-    }
-    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
