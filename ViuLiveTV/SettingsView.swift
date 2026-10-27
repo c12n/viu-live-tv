@@ -508,7 +508,7 @@ struct PINEntryView: View {
                 .font(.title3.bold())
             Text(errorText ?? subtitle)
                 .font(.subheadline)
-                .foregroundStyle(errorText == nil ? .secondary : .red)
+                .foregroundStyle(errorText == nil ? Color.secondary : Color.red)
                 .multilineTextAlignment(.center)
             HStack(spacing: 16) {
                 ForEach(0..<4, id: \.self) { i in
