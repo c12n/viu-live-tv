@@ -126,7 +126,7 @@ struct ChannelListView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
                 }
-                if epg.tags.count > 1 {
+                if !displayTags.isEmpty {
                     categoryChips
                 }
             }
