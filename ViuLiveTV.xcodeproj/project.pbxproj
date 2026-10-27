@@ -1,0 +1,290 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		E00000000000000000000001 /* ViuLiveTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000001 /* ViuLiveTVApp.swift */; };
+		E00000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000002 /* ContentView.swift */; };
+		E00000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000003 /* Models.swift */; };
+		E00000000000000000000004 /* EPGDateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000004 /* EPGDateParser.swift */; };
+		E00000000000000000000005 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000005 /* APIClient.swift */; };
+		E00000000000000000000006 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000006 /* Keychain.swift */; };
+		E00000000000000000000007 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000007 /* AuthViewModel.swift */; };
+		E00000000000000000000008 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000008 /* LoginView.swift */; };
+		E00000000000000000000009 /* ChannelListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000009 /* ChannelListView.swift */; };
+		E00000000000000000000010 /* ChannelRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000010 /* ChannelRowView.swift */; };
+		E00000000000000000000011 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000011 /* PlayerView.swift */; };
+		E00000000000000000000012 /* ExternalPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000012 /* ExternalPlayer.swift */; };
+		E00000000000000000000013 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000013 /* SettingsView.swift */; };
+		E00000000000000000000014 /* GlassHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000014 /* GlassHelpers.swift */; };
+		E00000000000000000000015 /* FavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000015 /* FavoritesStore.swift */; };
+		E00000000000000000000016 /* EPGStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000016 /* EPGStore.swift */; };
+		E00000000000000000000017 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000017 /* AppSettings.swift */; };
+		E00000000000000000000090 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000090 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		D00000000000000000000001 /* ViuLiveTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViuLiveTVApp.swift; sourceTree = "<group>"; };
+		D00000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		D00000000000000000000003 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		D00000000000000000000004 /* EPGDateParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPGDateParser.swift; sourceTree = "<group>"; };
+		D00000000000000000000005 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		D00000000000000000000006 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		D00000000000000000000007 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		D00000000000000000000008 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		D00000000000000000000009 /* ChannelListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelListView.swift; sourceTree = "<group>"; };
+		D00000000000000000000010 /* ChannelRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelRowView.swift; sourceTree = "<group>"; };
+		D00000000000000000000011 /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		D00000000000000000000012 /* ExternalPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalPlayer.swift; sourceTree = "<group>"; };
+		D00000000000000000000013 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		D00000000000000000000014 /* GlassHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassHelpers.swift; sourceTree = "<group>"; };
+		D00000000000000000000015 /* FavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoritesStore.swift; sourceTree = "<group>"; };
+		D00000000000000000000016 /* EPGStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPGStore.swift; sourceTree = "<group>"; };
+		D00000000000000000000017 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		D00000000000000000000090 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D00000000000000000000091 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		555555555555555555555555 /* ViuLiveTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ViuLiveTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BBBBBBBBBBBBBBBBBBBBBBBB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		222222222222222222222222 = {
+			isa = PBXGroup;
+			children = (
+				333333333333333333333333 /* ViuLiveTV */,
+				444444444444444444444444 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		333333333333333333333333 /* ViuLiveTV */ = {
+			isa = PBXGroup;
+			children = (
+				D00000000000000000000001 /* ViuLiveTVApp.swift */,
+				D00000000000000000000002 /* ContentView.swift */,
+				D00000000000000000000003 /* Models.swift */,
+				D00000000000000000000004 /* EPGDateParser.swift */,
+				D00000000000000000000005 /* APIClient.swift */,
+				D00000000000000000000006 /* Keychain.swift */,
+				D00000000000000000000007 /* AuthViewModel.swift */,
+				D00000000000000000000008 /* LoginView.swift */,
+				D00000000000000000000009 /* ChannelListView.swift */,
+				D00000000000000000000010 /* ChannelRowView.swift */,
+				D00000000000000000000011 /* PlayerView.swift */,
+				D00000000000000000000012 /* ExternalPlayer.swift */,
+				D00000000000000000000013 /* SettingsView.swift */,
+				D00000000000000000000014 /* GlassHelpers.swift */,
+				D00000000000000000000015 /* FavoritesStore.swift */,
+				D00000000000000000000016 /* EPGStore.swift */,
+				D00000000000000000000017 /* AppSettings.swift */,
+				D00000000000000000000090 /* Assets.xcassets */,
+				D00000000000000000000091 /* Info.plist */,
+			);
+			path = ViuLiveTV;
+			sourceTree = "<group>";
+		};
+		444444444444444444444444 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				555555555555555555555555 /* ViuLiveTV.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		666666666666666666666666 /* ViuLiveTV */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 888888888888888888888888 /* Build configuration list for PBXNativeTarget "ViuLiveTV" */;
+			buildPhases = (
+				AAAAAAAAAAAAAAAAAAAAAAAA /* Sources */,
+				BBBBBBBBBBBBBBBBBBBBBBBB /* Frameworks */,
+				CCCCCCCCCCCCCCCCCCCCCCCC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ViuLiveTV;
+			productName = ViuLiveTV;
+			productReference = 555555555555555555555555 /* ViuLiveTV.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		111111111111111111111111 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					666666666666666666666666 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 777777777777777777777777 /* Build configuration list for PBXProject "ViuLiveTV" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 222222222222222222222222;
+			productRefGroup = 444444444444444444444444 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				666666666666666666666666 /* ViuLiveTV */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		CCCCCCCCCCCCCCCCCCCCCCCC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E00000000000000000000090 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AAAAAAAAAAAAAAAAAAAAAAAA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E00000000000000000000001 /* ViuLiveTVApp.swift in Sources */,
+				E00000000000000000000002 /* ContentView.swift in Sources */,
+				E00000000000000000000003 /* Models.swift in Sources */,
+				E00000000000000000000004 /* EPGDateParser.swift in Sources */,
+				E00000000000000000000005 /* APIClient.swift in Sources */,
+				E00000000000000000000006 /* Keychain.swift in Sources */,
+				E00000000000000000000007 /* AuthViewModel.swift in Sources */,
+				E00000000000000000000008 /* LoginView.swift in Sources */,
+				E00000000000000000000009 /* ChannelListView.swift in Sources */,
+				E00000000000000000000010 /* ChannelRowView.swift in Sources */,
+				E00000000000000000000011 /* PlayerView.swift in Sources */,
+				E00000000000000000000012 /* ExternalPlayer.swift in Sources */,
+				E00000000000000000000013 /* SettingsView.swift in Sources */,
+				E00000000000000000000014 /* GlassHelpers.swift in Sources */,
+				E00000000000000000000015 /* FavoritesStore.swift in Sources */,
+				E00000000000000000000016 /* EPGStore.swift in Sources */,
+				E00000000000000000000017 /* AppSettings.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		999999999999999999999991 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		999999999999999999999992 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		999999999999999999999993 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ViuLiveTV/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.c12n.viulivetv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		999999999999999999999994 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ViuLiveTV/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.c12n.viulivetv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		777777777777777777777777 /* Build configuration list for PBXProject "ViuLiveTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				999999999999999999999991 /* Debug */,
+				999999999999999999999992 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		888888888888888888888888 /* Build configuration list for PBXNativeTarget "ViuLiveTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				999999999999999999999993 /* Debug */,
+				999999999999999999999994 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 111111111111111111111111 /* Project object */;
+}
