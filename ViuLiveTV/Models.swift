@@ -18,10 +18,10 @@ import Foundation
 func decodeFlexibleInt(_ container: KeyedDecodingContainer<DynamicKey>, _ keys: [String]) -> Int? {
     for key in keys {
         guard let ck = DynamicKey(stringValue: key) else { continue }
-        if let v = try? container.decodeIfPresent(Int.self, forKey: ck), let v { return v }
-        if let v = try? container.decodeIfPresent(Double.self, forKey: ck), let v { return Int(v) }
-        if let v = try? container.decodeIfPresent(Bool.self, forKey: ck), let v { return v ? 1 : 0 }
-        if let v = try? container.decodeIfPresent(String.self, forKey: ck), let v {
+        if let v = (try? container.decodeIfPresent(Int.self, forKey: ck)) ?? nil { return v }
+        if let v = (try? container.decodeIfPresent(Double.self, forKey: ck)) ?? nil { return Int(v) }
+        if let v = (try? container.decodeIfPresent(Bool.self, forKey: ck)) ?? nil { return v ? 1 : 0 }
+        if let v = (try? container.decodeIfPresent(String.self, forKey: ck)) ?? nil {
             let trimmed = v.trimmingCharacters(in: .whitespaces)
             if let i = Int(trimmed) { return i }
             if let d = Double(trimmed) { return Int(d) }
@@ -35,16 +35,16 @@ func decodeFlexibleInt(_ container: KeyedDecodingContainer<DynamicKey>, _ keys: 
 func decodeFlexibleString(_ container: KeyedDecodingContainer<DynamicKey>, _ keys: [String]) -> String? {
     for key in keys {
         guard let ck = DynamicKey(stringValue: key) else { continue }
-        if let v = try? container.decodeIfPresent(String.self, forKey: ck), let v {
+        if let v = (try? container.decodeIfPresent(String.self, forKey: ck)) ?? nil {
             return v
         }
-        if let v = try? container.decodeIfPresent(Int.self, forKey: ck), let v { return String(v) }
-        if let v = try? container.decodeIfPresent(Double.self, forKey: ck), let v {
+        if let v = (try? container.decodeIfPresent(Int.self, forKey: ck)) ?? nil { return String(v) }
+        if let v = (try? container.decodeIfPresent(Double.self, forKey: ck)) ?? nil {
             // Avoid trailing ".0" for integral doubles
             if v.rounded() == v { return String(Int(v)) }
             return String(v)
         }
-        if let v = try? container.decodeIfPresent(Bool.self, forKey: ck), let v { return v ? "1" : "0" }
+        if let v = (try? container.decodeIfPresent(Bool.self, forKey: ck)) ?? nil { return v ? "1" : "0" }
     }
     return nil
 }
@@ -53,9 +53,9 @@ func decodeFlexibleString(_ container: KeyedDecodingContainer<DynamicKey>, _ key
 func decodeFlexibleBool(_ container: KeyedDecodingContainer<DynamicKey>, _ keys: [String]) -> Bool? {
     for key in keys {
         guard let ck = DynamicKey(stringValue: key) else { continue }
-        if let v = try? container.decodeIfPresent(Bool.self, forKey: ck), let v { return v }
-        if let v = try? container.decodeIfPresent(Int.self, forKey: ck), let v { return v != 0 }
-        if let v = try? container.decodeIfPresent(String.self, forKey: ck), let v {
+        if let v = (try? container.decodeIfPresent(Bool.self, forKey: ck)) ?? nil { return v }
+        if let v = (try? container.decodeIfPresent(Int.self, forKey: ck)) ?? nil { return v != 0 }
+        if let v = (try? container.decodeIfPresent(String.self, forKey: ck)) ?? nil {
             switch v.lowercased().trimmingCharacters(in: .whitespaces) {
             case "1", "true", "yes", "y": return true
             case "0", "false", "no", "n", "": return false
@@ -256,8 +256,7 @@ struct EPGChannel: Decodable, Identifiable, Hashable {
 
         // schedule is an array; decode leniently (may be absent).
         if let ck = DynamicKey(stringValue: "schedule"),
-           let decoded = try? c.decodeIfPresent([EPGProgramme].self, forKey: ck),
-           let progs = decoded {
+           let progs = (try? c.decodeIfPresent([EPGProgramme].self, forKey: ck)) ?? nil {
             self.schedule = progs
         } else {
             self.schedule = []
