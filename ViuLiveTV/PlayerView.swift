@@ -11,6 +11,7 @@ import SwiftUI
 import UIKit
 import AVKit
 import AVFoundation
+import MediaPlayer
 import OSLog
 
 /// Playback lifecycle log — visible in Console and in the CI simulator
@@ -167,6 +168,7 @@ struct PlayerView: View {
                 playbackErrorPanel(err)
             } else if let url = model.streamURL {
                 AVPlayerContainer(url: url, generation: model.linkGeneration,
+                                  title: model.displayName,
                                   control: control,
                                   onPlaybackError: { model.handlePlaybackFailure($0) })
                     .ignoresSafeArea()
@@ -367,6 +369,8 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
     /// Changes whenever a fresh live link was fetched; forces an item swap
     /// even when the URL string itself is unchanged.
     var generation: Int = 0
+    /// Channel name for the Now Playing info (lock screen / Control Centre).
+    var title: String = ""
     /// Receives the AVPlayer so SwiftUI gestures can pause/resume it.
     var control: PlayerControl?
     var onPlaybackError: ((String) -> Void)?
@@ -414,6 +418,36 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         context.coordinator.timeObserverToken = token
         context.coordinator.observedPlayer = player
         control?.player = player
+
+        // Background play + Picture in Picture: the app declares the
+        // `audio` background mode (Info.plist UIBackgroundModes) and the
+        // player is PiP-enabled; here we activate the playback audio
+        // session and publish Now Playing info with lock-screen /
+        // Control Centre play-pause commands, which is what lets audio
+        // keep playing with the screen locked and lets PiP start
+        // automatically when the app is backgrounded.
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback)
+            try session.setActive(true)
+        } catch {
+            // Non-fatal; foreground playback is unaffected.
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+            MPMediaItemPropertyTitle: title.isEmpty ? "Viu Live TV" : title,
+            MPMediaItemPropertyIsLiveStream: true
+        ]
+        let commands = MPRemoteCommandCenter.shared()
+        let playTarget = commands.playCommand.addTarget { _ in
+            player.play()
+            return .success
+        }
+        let pauseTarget = commands.pauseCommand.addTarget { _ in
+            player.pause()
+            return .success
+        }
+        context.coordinator.remoteTargets = [playTarget, pauseTarget]
+
         player.play()
         return vc
     }
@@ -435,6 +469,13 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
             player.removeTimeObserver(token)
         }
         coordinator.timeObserverToken = nil
+        let commands = MPRemoteCommandCenter.shared()
+        for target in coordinator.remoteTargets {
+            commands.playCommand.removeTarget(target)
+            commands.pauseCommand.removeTarget(target)
+        }
+        coordinator.remoteTargets = []
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         uiViewController.player?.pause()
         uiViewController.player = nil
         coordinator.invalidate()
@@ -447,6 +488,7 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         var lastGeneration = 0
         var timeObserverToken: Any?
         weak var observedPlayer: AVPlayer?
+        var remoteTargets: [Any] = []
 
         init(onPlaybackError: ((String) -> Void)?) {
             self.onPlaybackError = onPlaybackError
@@ -492,6 +534,16 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         // Keep playback going when PiP starts from inline.
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                   willBeginFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator) {}
+
+        func playerViewController(_ playerViewController: AVPlayerViewController,
+                                  failedToStartPictureInPictureWithError error: Error) {
+            viuPlaybackLog.error("VIU_PLAYBACK PiP failed to start: \(error.localizedDescription, privacy: .public)")
+        }
+
+        func playerViewController(_ playerViewController: AVPlayerViewController,
+                                  restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+            completionHandler(true)
+        }
     }
 }
 
