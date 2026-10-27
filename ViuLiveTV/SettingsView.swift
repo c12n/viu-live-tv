@@ -11,6 +11,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(AppSettings.self) private var settingsStore
+    @Environment(EPGStore.self) private var epg
     @Environment(\.dismiss) private var dismiss
 
     @State private var showLogoutConfirm = false
