@@ -66,7 +66,7 @@ final class PlayerModel {
             playbackError = nil
             linkGeneration += 1
             isLoading = false
-            viuPlaybackLog.info("VIU_PLAYBACK link ok stream=\(channel.streamId, privacy: .public) host=\(url.host ?? "?", privacy: .public)")
+            viuPlaybackLog.info("VIU_PLAYBACK link ok stream=\(self.channel.streamId, privacy: .public) host=\(url.host ?? "?", privacy: .public)")
             // Fire-and-forget history ping.
             await APIClient.shared.reportHistory(streamID: channel.streamId,
                                                  streamName: displayName,
@@ -74,7 +74,7 @@ final class PlayerModel {
         } catch {
             isLoading = false
             errorMessage = (error as? APIError)?.errorDescription ?? error.localizedDescription
-            viuPlaybackLog.error("VIU_PLAYBACK link failed stream=\(channel.streamId, privacy: .public): \(errorMessage ?? "?", privacy: .public)")
+            viuPlaybackLog.error("VIU_PLAYBACK link failed stream=\(self.channel.streamId, privacy: .public): \(self.errorMessage ?? "?", privacy: .public)")
         }
     }
 
@@ -259,8 +259,10 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
     /// IPTV panels/CDNs expect the client app's user agent (this is the UA
     /// the Android app sends); AVPlayer otherwise uses a generic media UA.
     static func makeItem(url: URL) -> AVPlayerItem {
+        // The options key is AVURLAssetHTTPHeaderFieldsKey (literal string —
+        // the constant isn't visible to the Swift compiler in this SDK).
         let asset = AVURLAsset(url: url, options: [
-            AVURLAssetHTTPHeaderFieldsKey: ["User-Agent": "viutvapp/1.12 LH"]
+            "AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": "viutvapp/1.12 LH"]
         ])
         return AVPlayerItem(asset: asset)
     }
