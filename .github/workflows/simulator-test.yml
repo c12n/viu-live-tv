@@ -1,0 +1,100 @@
+name: Simulator Test (iOS 26)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  simulator-test:
+    name: Run on virtual iPhone (iOS 26)
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode and simulator runtimes
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+          xcrun simctl list devicetypes | grep -i iPhone | head -20
+
+      - name: Build for iOS Simulator
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ViuLiveTV.xcodeproj \
+            -scheme ViuLiveTV \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+          APP_PATH=$(find "$RUNNER_TEMP/DerivedData/Build/Products" -name "ViuLiveTV.app" -maxdepth 3 | head -1)
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          test -d "$APP_PATH"
+          ls -la "$APP_PATH"
+
+      - name: Boot a virtual iPhone on iOS 26, install and launch
+        run: |
+          set -euo pipefail
+          mkdir -p test-artifacts
+          DEVICE_UDID=$(python3 - <<'PY'
+          import json, subprocess, sys
+          data = json.loads(subprocess.check_output(["xcrun","simctl","list","-j","devices","runtimes"]))
+          # Prefer an iOS 26 runtime
+          runtimes = {r["identifier"]: r for r in data.get("runtimes", []) if r.get("isAvailable", True)}
+          ios26 = [r for r in runtimes.values() if r["name"].startswith("iOS 26")]
+          candidates = ios26 or [r for r in runtimes.values() if r["name"].startswith("iOS")]
+          if not candidates:
+              sys.exit("No iOS simulator runtime found")
+          runtime = sorted(candidates, key=lambda r: r["name"])[-1]
+          print(f"Runtime: {runtime['name']} ({runtime['identifier']})", file=sys.stderr)
+          # Prefer a recent Pro / standard iPhone device type
+          types = json.loads(subprocess.check_output(["xcrun","simctl","list","-j","devicetypes"]))["devicetypes"]
+          pref = ["iPhone 17 Pro", "iPhone 17", "iPhone 16 Pro", "iPhone 16", "iPhone 15 Pro", "iPhone 15"]
+          chosen = None
+          for name in pref:
+              for t in types:
+                  if t["name"] == name:
+                      chosen = t; break
+              if chosen: break
+          if chosen is None:
+              iphones = [t for t in types if t["name"].startswith("iPhone")]
+              chosen = iphones[-1]
+          print(f"Device type: {chosen['name']}", file=sys.stderr)
+          udid = subprocess.check_output(["xcrun","simctl","create","ViuTestiPhone", chosen["identifier"], runtime["identifier"]]).decode().strip()
+          print(udid)
+          PY
+          )
+          echo "DEVICE_UDID=$DEVICE_UDID" >> "$GITHUB_ENV"
+          echo "Booting $DEVICE_UDID"
+          xcrun simctl boot "$DEVICE_UDID"
+          xcrun simctl bootstatus "$DEVICE_UDID" -b
+
+          xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
+          echo "Installed. Launching com.c12n.viulivetv ..."
+          xcrun simctl launch "$DEVICE_UDID" com.c12n.viulivetv | tee test-artifacts/launch-light.txt
+          sleep 6
+          # App must still be running (launch returns a PID; a crash would show on relaunch check)
+          xcrun simctl io "$DEVICE_UDID" screenshot test-artifacts/iphone-ios26-light.png
+
+          xcrun simctl ui "$DEVICE_UDID" appearance dark
+          sleep 2
+          xcrun simctl io "$DEVICE_UDID" screenshot test-artifacts/iphone-ios26-dark.png
+
+          xcrun simctl ui "$DEVICE_UDID" appearance light
+          xcrun simctl spawn "$DEVICE_UDID" log show --last 2m --predicate 'process == "ViuLiveTV"' > test-artifacts/app-log.txt 2>&1 || true
+          ls -lh test-artifacts/
+
+      - name: Upload simulator screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Simulator-iOS26-Screenshots
+          path: test-artifacts/
+          if-no-files-found: warn
