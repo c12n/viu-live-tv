@@ -11,31 +11,35 @@ Generated with the help of Claude (via claude.ai), then packaged as a standard X
 ![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**Latest release: [v1.2.1](https://github.com/c12n/viu-live-tv/releases/tag/v1.2.1)** — download `ViuLiveTV.ipa` from the release and sideload it with AltStore, SideStore, Sideloadly or a similar tool using your own Apple ID.
+**Latest release: [v1.2.2](https://github.com/c12n/viu-live-tv/releases/tag/v1.2.2)** — download `ViuLiveTV.ipa` from the release and sideload it with AltStore, SideStore, Sideloadly or a similar tool using your own Apple ID.
 
 ## Features
 
 - **First-boot Viu login** — the first time you open the app it asks for your Viu username and password and signs in against `POST /api/4/authenticate`. The session token is stored in the **Keychain** (never in plain text files); only your username is remembered for the form. You can also paste a session token directly.
 - **VIP subscription gate** — after sign-in and on every launch, the app checks the account's premium status (`/api/4/accountinfo`). Accounts without an active subscription are stopped at a **"Non-VIP Found"** screen with a **Renew or Purchase** button that opens the official member website ([viu.to](https://viu.to)), an "I've Renewed — Check Again" re-check, and a sign-out option. A network hiccup during the check never locks a subscriber out — the gate only triggers on a definite non-active status.
 - **Channels + Favorites first** — after setup, the first thing you see is the channel list, with a **YouTube-style floating tab bar** (Channels / Favorites / Settings). Search, pull-to-refresh, channel logos, and **now / next** programme info with a progress bar from the EPG.
-- **Live TV categories** — a scrollable chip row with the categories from your account (Hot Right Now, Hockey, Canada, USA, UK, News, Kids, Sports, ESPN Plus, TSN Plus, and 60+ more). Tap one to filter the channel list instantly.
+- **Live TV categories** — a scrollable chip row with the categories from your account (Hot Right Now, Hockey, Canada, USA, UK, News, Kids, Sports, ESPN Plus, TSN Plus, and 60+ more). Tap one to filter the channel list instantly, or **swipe left / right across the list** to move between categories. Categories can be hidden in Settings and reordered by long-press dragging a chip.
 - **Fast loading, cached guide** — the guide loads from a single all-channels feed (one request; categories are read from each channel's own tags, with a parallel per-category merge as fallback) and is **cached on disk**, so later launches show your channels instantly while refreshing in the background. The cache is cleared on sign-out.
 - **Video-only native player** — `AVPlayer` in `AVPlayerViewController`. The player screen is *only the video*: no channel name, no badges, no permanent buttons. A single auto-hiding **Guide** button (tap to reveal) opens the **channel guide** over the video in portrait and landscape — pick a channel and playback switches in place.
   - **Gestures** — **double-tap** the video to pause / resume; **swipe right from the left edge** to go back to the channel list.
   - **Picture in Picture** — including auto-PiP when you leave the app mid-stream.
-  - **Background play** — audio keeps playing with the screen locked or the app backgrounded, with **Now Playing** info and lock-screen / Control Centre play-pause (the app declares the `audio` background mode).
+  - **Background play** — audio keeps playing with the screen locked or the app backgrounded, with **Now Playing** info and lock-screen / Control Centre play-pause (the app declares the `audio` background mode). Background Play and PiP each have a Settings toggle, and the Guide button sits clear of the player's native controls (AirPlay, PiP, volume, play/pause stay visible).
   - **AirPlay** — from the player's own controls (`allowsExternalPlayback`).
   - **Visible errors, self-healing** — if a stream fails, the player retries once with a fresh stream link, then shows the actual error with Try Again / Open in External Player instead of a black screen.
   - **Rotation-safe** — the layout is chosen by device (iPhone stack / iPad split), never by the current size class, so rotating mid-stream never rebuilds or restarts playback.
 - **External players** — open any channel in **VLC**, **Infuse**, **OutPlayer**, **nPlayer** and more from the channel's menu, or pick your default player in Settings. If the chosen app isn't installed you get a clear message and the share-sheet fallback.
-- **Favorites** — star channels locally (persisted on device) and synced to the Viu account with the same `save/stream/favorite` / `remove/stream/favorite` endpoints the Android app uses. **Swipe right** on a channel to favorite / unfavorite it, tap the star, or use the long-press menu.
-- **Haptics** — light tactile feedback on channel taps, category chips and player taps; a firmer tap on favorite changes and double-tap pause.
+- **Favorites** — heart channels locally (persisted on device) and synced to the Viu account with the same `save/stream/favorite` / `remove/stream/favorite` endpoints the Android app uses. **Swipe right** on a channel and tap the heart button to favorite / unfavorite it, tap the heart on the row, or use the long-press menu.
+- **Haptics** — light tactile feedback on channel taps, category chips and player taps; a firmer tap on favorite changes and double-tap pause. Can be turned off in Settings → Appearance.
+- **Parental controls** — a Settings section (off by default): create a 4-digit PIN (stored in the Keychain) and lock any channels — locked channels show a lock icon next to their name in the channel list, Favorites and search, and ask for the PIN before playing (in the app, from the channel guide, or in an external player). Turning the controls off asks for the PIN; signing out and back in resets them. **Kids Mode** (same section) limits the whole app to the Kids category, Favorites included — the PIN is only needed to turn Kids Mode off, and if no PIN exists yet you create one when you turn it on.
+- **Sports Mode** — a Settings toggle (off by default, no PIN): only sports categories are shown (anything with "Sport" in the name, plus Hockey, ESPN+, TSN+ and similar), and the All view becomes all sports channels.
+- **Accent color** — Settings → Appearance: red (default), blue, purple, pink, orange, green or teal, each with Light/Dark variants chosen to stay visible in both modes. The color applies across the app (tab bar, category chips, LIVE badge, progress bars, buttons) and switches the app icon to a matching alternate (see below).
+- **Settings data tools** — Clear Cache shows how much data the app has used before clearing; Clear Favorites removes every favorite on the device and on the website; Restore Defaults resets category visibility and order.
 - **Native Liquid Glass on iOS 26+** — channel cards, toolbars and player chrome use SwiftUI's native `glassEffect`, with a graceful Material fallback on iOS 17–25.
 - **Dynamic Light / Dark Mode** — follows the system by default, with a System / Light / Dark override in Settings.
 - **Portrait + landscape, iPhone + iPad** — iPad gets a two-column split view (channel list sidebar, player detail); iPhone uses a navigation stack.
 - **Diagnostics** — Settings → Channel Loading Diagnostics probes every endpoint live and produces a shareable, token-free report.
 - **Account in Settings** — account info (premium status, expiry, created date) and **Sign Out**, which calls `/api/4/logout/{token}`, clears the Keychain token and the cached guide.
-- **Custom app icon** — a 1024×1024 VIU icon (red on black, matching the Android app's branding) with dedicated Dark and Tinted appearance variants for iOS 18+/26 home screens.
+- **Custom app icon** — a 1024×1024 VIU icon (red block letters with a Liquid Glass effect on black) with dedicated Dark and Tinted appearance variants for iOS 18+/26 home screens. Matching alternate icons in blue, purple, pink, orange, green and teal are bundled and applied automatically when the accent color changes.
 
 ## How it talks to Viu
 
