@@ -435,7 +435,9 @@ struct AVPlayerContainer: UIViewControllerRepresentable {
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = [
             MPMediaItemPropertyTitle: title.isEmpty ? "Viu Live TV" : title,
-            MPMediaItemPropertyIsLiveStream: true
+            // MPNowPlayingInfoPropertyIsLiveStream (literal — the named
+            // media-item constant isn't exposed to Swift in this SDK).
+            "MPNowPlayingInfoPropertyIsLiveStream": true
         ]
         let commands = MPRemoteCommandCenter.shared()
         let playTarget = commands.playCommand.addTarget { _ in
