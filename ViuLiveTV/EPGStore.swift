@@ -98,6 +98,71 @@ final class EPGStore {
         state = .idle
     }
 
+    /// Clear Cache (Settings): drop the on-disk guide and download it fresh.
+    func clearGuideCache() async {
+        if let url = Self.cacheURL { try? FileManager.default.removeItem(at: url) }
+        await refresh()
+    }
+
+    // MARK: Category visibility & order (user preferences)
+
+    private(set) var hiddenCategoryTags: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: "viu_hidden_category_tags") ?? [])
+    private(set) var categoryOrder: [String] =
+        UserDefaults.standard.stringArray(forKey: "viu_category_order") ?? []
+
+    func isCategoryHidden(_ parameterName: String) -> Bool {
+        hiddenCategoryTags.contains(parameterName)
+    }
+
+    func setCategoryHidden(_ parameterName: String, hidden: Bool) {
+        if hidden { hiddenCategoryTags.insert(parameterName) } else { hiddenCategoryTags.remove(parameterName) }
+        UserDefaults.standard.set(Array(hiddenCategoryTags), forKey: "viu_hidden_category_tags")
+    }
+
+    /// The effective order of all real categories (the built-in ALL /
+    /// FAVORITES excluded): the user's saved order first, then any
+    /// remaining categories in server order.
+    func effectiveCategoryOrder() -> [String] {
+        var params: [String] = []
+        for tag in tags where tag.parameterName != "ALL" && tag.parameterName != "FAVORITES" {
+            params.append(tag.parameterName)
+        }
+        var result: [String] = []
+        var used = Set<String>()
+        for param in categoryOrder where params.contains(param) && !used.contains(param) {
+            result.append(param)
+            used.insert(param)
+        }
+        for param in params where !used.contains(param) {
+            result.append(param)
+        }
+        return result
+    }
+
+    /// Move a category to just before `target` (or to the end when nil)
+    /// and persist the new order. Powers long-press drag in the chip bar.
+    func moveCategory(_ parameterName: String, before target: String?) {
+        var order = effectiveCategoryOrder()
+        order.removeAll { $0 == parameterName }
+        if let target, let idx = order.firstIndex(of: target) {
+            order.insert(parameterName, at: idx)
+        } else {
+            order.append(parameterName)
+        }
+        categoryOrder = order
+        UserDefaults.standard.set(order, forKey: "viu_category_order")
+    }
+
+    /// Restore Defaults (Settings): show every category again and reset
+    /// the category order to the server default.
+    func resetCategoryPreferences() {
+        hiddenCategoryTags = []
+        categoryOrder = []
+        UserDefaults.standard.removeObject(forKey: "viu_hidden_category_tags")
+        UserDefaults.standard.removeObject(forKey: "viu_category_order")
+    }
+
     /// Fetch the live channel list. On failure, keep whatever we have
     /// (fallback or previously loaded) and record what the server said.
     ///

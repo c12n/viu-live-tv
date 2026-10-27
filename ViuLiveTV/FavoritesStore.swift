@@ -50,6 +50,32 @@ final class FavoritesStore {
         if changed { save() }
     }
 
+    private var didReconcile = false
+
+    /// Two-way sync with the account's favorites on the server — the same
+    /// list the website shows. Pulls the server's FAVORITES feed into the
+    /// local set and pushes any local-only favorites up. Add-only in both
+    /// directions, so syncing can never lose a favorite. This is also what
+    /// makes favorites survive an app update or reinstall: sign in, and
+    /// the website's favorites come straight back. Runs once per launch.
+    func reconcileWithServer() async {
+        guard !didReconcile else { return }
+        didReconcile = true
+        do {
+            let serverChannels = try await APIClient.shared.fetchChannels(tag: "FAVORITES")
+            let serverIDs = Set(serverChannels.map { $0.streamId })
+            if !serverIDs.isSubset(of: ids) {
+                ids.formUnion(serverIDs)
+                save()
+            }
+            for id in ids.subtracting(serverIDs) {
+                try? await APIClient.shared.saveFavorite(streamID: id)
+            }
+        } catch {
+            didReconcile = false   // retry on a later appearance
+        }
+    }
+
     private func syncToServer(streamID: Int, favorite: Bool) {
         Task {
             do {

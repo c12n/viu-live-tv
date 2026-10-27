@@ -143,10 +143,17 @@ struct ChannelListView: View {
         }
         .task {
             if epg.usingFallback { await epg.refresh() }
+            await favorites.reconcileWithServer()
         }
         .onChange(of: epg.tags) { _, newTags in
             // Drop a category selection that no longer exists.
             if let selectedCategory, !newTags.contains(where: { $0.parameterName == selectedCategory }) {
+                self.selectedCategory = nil
+            }
+        }
+        .onChange(of: epg.hiddenCategoryTags) { _, _ in
+            // Drop a category selection that was just hidden in Settings.
+            if let selectedCategory, epg.isCategoryHidden(selectedCategory) {
                 self.selectedCategory = nil
             }
         }
@@ -174,12 +181,26 @@ struct ChannelListView: View {
     // MARK: Category chips
 
     /// The server's ALL and FAVORITES tags duplicate the built-in All /
-    /// Favorites tabs, so they are not repeated as chips. Written as an
-    /// explicit loop — a filter closure here pushed the type checker over
-    /// its limit inside the big list body.
+    /// Favorites tabs, so they are not repeated as chips. Categories the
+    /// user hid in Settings are excluded, and the user's saved order is
+    /// applied (long-press drag in the chip bar). Written as explicit
+    /// loops — filter closures here pushed the type checker over its
+    /// limit inside the big list body.
     private var displayTags: [EPGTag] {
+        var base: [EPGTag] = []
+        for tag in epg.tags where tag.parameterName != "ALL" && tag.parameterName != "FAVORITES"
+            && !epg.isCategoryHidden(tag.parameterName) {
+            base.append(tag)
+        }
         var result: [EPGTag] = []
-        for tag in epg.tags where tag.parameterName != "ALL" && tag.parameterName != "FAVORITES" {
+        var used = Set<String>()
+        for param in epg.categoryOrder {
+            for tag in base where tag.parameterName == param {
+                result.append(tag)
+                used.insert(param)
+            }
+        }
+        for tag in base where !used.contains(tag.parameterName) {
             result.append(tag)
         }
         return result
@@ -191,11 +212,34 @@ struct ChannelListView: View {
                 chip(title: "All", isSelected: selectedCategory == nil) {
                     selectedCategory = nil
                 }
+                .dropDestination(for: String.self) { items, _ in
+                    // Dropping on "All" moves the category to the front.
+                    guard let dragged = items.first else { return false }
+                    epg.moveCategory(dragged, before: displayTags.first?.parameterName)
+                    Haptics.medium()
+                    return true
+                }
                 ForEach(displayTags) { tag in
                     chip(title: tag.displayName, isSelected: selectedCategory == tag.parameterName) {
                         selectedCategory = tag.parameterName
                     }
+                    .draggable(tag.parameterName)
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let dragged = items.first, dragged != tag.parameterName else { return false }
+                        epg.moveCategory(dragged, before: tag.parameterName)
+                        Haptics.medium()
+                        return true
+                    }
                 }
+                // Trailing drop zone: dropping here moves the category last.
+                Color.clear
+                    .frame(width: 28, height: 30)
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let dragged = items.first else { return false }
+                        epg.moveCategory(dragged, before: nil)
+                        Haptics.medium()
+                        return true
+                    }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
@@ -249,8 +293,46 @@ struct ChannelListView: View {
             // In split view, selection drives the detail column.
             rowContent
         } else {
-            // In a NavigationStack, push the player.
-            NavigationLink(value: channel) { rowContent }
+            // iPhone: the whole row is a plain Button that pushes the
+            // player via play(). A NavigationLink whose label contains the
+            // interactive favorite star swallowed plain row taps (only the
+            // long-press menu's Play worked), so the star inside the row
+            // is a non-interactive indicator and a real star Button is
+            // overlaid exactly on top of it.
+            ZStack(alignment: .trailing) {
+                Button {
+                    play(channel)
+                } label: {
+                    ChannelRowView(
+                        channel: channel,
+                        isFavorite: favorites.isFavorite(channel.streamId),
+                        now: epg.now(for: channel),
+                        next: epg.next(for: channel),
+                        onPlay: { play(channel) },
+                        onToggleFavorite: {
+                            Haptics.medium()
+                            favorites.toggle(channel)
+                        },
+                        onOpenExternal: { openExternal(channel) },
+                        tapToPlay: false,
+                        favoriteButtonInteractive: false
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    Haptics.medium()
+                    favorites.toggle(channel)
+                } label: {
+                    Image(systemName: favorites.isFavorite(channel.streamId) ? "star.fill" : "star")
+                        .foregroundStyle(favorites.isFavorite(channel.streamId) ? Color.yellow : Color.secondary)
+                        .font(.body)
+                        .padding(10)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(favorites.isFavorite(channel.streamId) ? "Remove from favorites" : "Add to favorites")
+            }
         }
     }
 

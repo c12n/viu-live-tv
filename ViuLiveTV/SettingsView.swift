@@ -15,6 +15,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showLogoutConfirm = false
+    @State private var showClearCacheConfirm = false
+    @State private var showRestoreDefaultsConfirm = false
 
     var body: some View {
         @Bindable var settings = settingsStore
@@ -47,6 +49,10 @@ struct SettingsView: View {
                 } footer: {
                     Text("'Open in external player' on a channel uses this app. A green check means the app looks installed.")
                 }
+
+                categoriesSection
+
+                dataSection
 
                 Section("Stream Quality") {
                     Picker("Preferred Quality", selection: $settings.streamQuality) {
@@ -86,6 +92,76 @@ struct SettingsView: View {
                     Task { await auth.logout() }
                 }
                 Button("Cancel", role: .cancel) {}
+            }
+            .confirmationDialog("Clear the channel cache?",
+                                isPresented: $showClearCacheConfirm,
+                                titleVisibility: .visible) {
+                Button("Clear Cache", role: .destructive) {
+                    Task { await epg.clearGuideCache() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The saved channel guide is deleted and downloaded fresh from Viu. Favorites and settings are not affected.")
+            }
+            .confirmationDialog("Restore category defaults?",
+                                isPresented: $showRestoreDefaultsConfirm,
+                                titleVisibility: .visible) {
+                Button("Restore Defaults") {
+                    epg.resetCategoryPreferences()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("All channel categories will be shown again, and their order reset to the default. Favorites and other settings are not affected.")
+            }
+        }
+    }
+
+    // MARK: Categories & data
+
+    /// Every real category (the built-in All / Favorites tabs excluded)
+    /// with a visibility toggle.
+    private var categoryTags: [EPGTag] {
+        var result: [EPGTag] = []
+        for tag in epg.tags where tag.parameterName != "ALL" && tag.parameterName != "FAVORITES" {
+            result.append(tag)
+        }
+        return result
+    }
+
+    private var categoriesSection: some View {
+        Section {
+            if categoryTags.isEmpty {
+                Text("Categories load together with your channel list.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(categoryTags) { tag in
+                    Toggle(isOn: Binding(
+                        get: { !epg.isCategoryHidden(tag.parameterName) },
+                        set: { epg.setCategoryHidden(tag.parameterName, hidden: !$0) }
+                    )) {
+                        Text(tag.displayName)
+                    }
+                }
+            }
+        } header: {
+            Text("Channel Categories")
+        } footer: {
+            Text("Hidden categories are removed from the category bar in the channel list. You can also long-press a category in that bar and drag it into your preferred order.")
+        }
+    }
+
+    private var dataSection: some View {
+        Section("Data") {
+            Button {
+                showClearCacheConfirm = true
+            } label: {
+                Label("Clear Cache", systemImage: "trash")
+            }
+            Button {
+                showRestoreDefaultsConfirm = true
+            } label: {
+                Label("Restore Defaults", systemImage: "arrow.counterclockwise")
             }
         }
     }

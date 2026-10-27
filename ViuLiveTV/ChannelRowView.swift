@@ -22,6 +22,10 @@ struct ChannelRowView: View {
     /// row sits inside a NavigationLink, and a tap gesture on the label would
     /// swallow the link's navigation.
     var tapToPlay: Bool = true
+    /// When false the star is drawn as a plain (non-interactive) indicator.
+    /// The iPhone list overlays its own star Button: an interactive button
+    /// inside the row's play Button would swallow the row's taps.
+    var favoriteButtonInteractive: Bool = true
 
     // A ticking clock for live progress updates.
     @State private var clock = Date()
@@ -68,14 +72,15 @@ struct ChannelRowView: View {
             }
             Spacer(minLength: 2)
 
-            Button(action: onToggleFavorite) {
-                Image(systemName: isFavorite ? "star.fill" : "star")
-                    .foregroundStyle(isFavorite ? .yellow : .secondary)
-                    .font(.body)
-                    .contentShape(Rectangle())
+            if favoriteButtonInteractive {
+                Button(action: onToggleFavorite) {
+                    starImage
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
+            } else {
+                starImage
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
         }
         .padding(.vertical, 3)
         .contentShape(Rectangle())
@@ -91,6 +96,13 @@ struct ChannelRowView: View {
                 Label("Open in External Player", systemImage: "arrow.up.forward.app")
             }
         }
+    }
+
+    private var starImage: some View {
+        Image(systemName: isFavorite ? "star.fill" : "star")
+            .foregroundStyle(isFavorite ? .yellow : .secondary)
+            .font(.body)
+            .contentShape(Rectangle())
     }
 
     private var nowLine: String {
