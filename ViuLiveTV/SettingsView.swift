@@ -58,6 +58,14 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Help") {
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        Label("Channel Loading Diagnostics", systemImage: "stethoscope")
+                    }
+                }
+
                 aboutSection
                 logoutSection
             }
@@ -133,5 +141,77 @@ struct SettingsView: View {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
         return "\(v) (\(b))"
+    }
+}
+
+// MARK: - Diagnostics
+
+/// Runs the exact requests the app uses to load channels and shows what
+/// the server actually answered — the fastest way to pin down why a live
+/// list isn't loading. The report contains no token or password.
+struct DiagnosticsView: View {
+    @Environment(EPGStore.self) private var epg
+    @State private var lines: [String] = []
+    @State private var running = false
+
+    private var reportText: String {
+        var parts = ["Viu Live TV — channel loading diagnostics"]
+        if !epg.strategyLog.isEmpty {
+            parts.append("Last channel refresh:")
+            parts.append(contentsOf: epg.strategyLog.map { "• \($0)" })
+        }
+        if !lines.isEmpty {
+            parts.append("Live endpoint tests:")
+            parts.append(contentsOf: lines.map { "• \($0)" })
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Button {
+                    Task { await run() }
+                } label: {
+                    HStack {
+                        if running { ProgressView() }
+                        Text(running ? "Testing…" : "Run Endpoint Tests")
+                    }
+                }
+                .disabled(running)
+
+                if !epg.strategyLog.isEmpty || !lines.isEmpty {
+                    ShareLink(item: reportText) {
+                        Label("Share Report", systemImage: "square.and.arrow.up")
+                    }
+                }
+            } footer: {
+                Text("Makes the same requests the app uses and shows exactly what the Viu server answers. The report never includes your sign-in token or password.")
+            }
+
+            if !epg.strategyLog.isEmpty {
+                Section("Last Channel Refresh") {
+                    ForEach(Array(epg.strategyLog.enumerated()), id: \.offset) { _, line in
+                        Text(line).font(.footnote).textSelection(.enabled)
+                    }
+                }
+            }
+
+            if !lines.isEmpty {
+                Section("Endpoint Tests") {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        Text(line).font(.footnote).textSelection(.enabled)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Diagnostics")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func run() async {
+        running = true
+        defer { running = false }
+        lines = await APIClient.shared.runDiagnostics()
     }
 }

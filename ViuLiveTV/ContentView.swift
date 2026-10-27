@@ -26,6 +26,12 @@ struct ContentView: View {
         }
         .animation(.default, value: auth.state)
         .preferredColorScheme(settings.appearance.colorScheme)
+        .task {
+            // A stored token may have been revoked since the last launch
+            // (Viu revokes it when the account signs in elsewhere). Check
+            // once per launch; only an explicit rejection signs out.
+            if auth.state == .signedIn { await auth.validateSession() }
+        }
     }
 }
 

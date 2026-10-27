@@ -22,6 +22,7 @@ struct ChannelListView: View {
     @Environment(EPGStore.self) private var epg
     @Environment(FavoritesStore.self) private var favorites
     @Environment(AppSettings.self) private var settings
+    @Environment(AuthViewModel.self) private var auth
 
     /// On iPad, selecting a channel drives the detail column. On iPhone we push.
     @Binding var selection: EPGChannel?
@@ -50,6 +51,24 @@ struct ChannelListView: View {
 
     var body: some View {
         List(selection: isSidebar ? $selection : .constant(nil)) {
+            if epg.sessionExpired {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Your Viu session has expired.", systemImage: "key.slash")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.red)
+                        Text("The server no longer accepts this sign-in (signing in on the Viu website or another device can revoke it). Sign out and sign in again to load your channels.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Button("Sign Out & Sign In Again", role: .destructive) {
+                            Task { await auth.logout() }
+                        }
+                        .font(.subheadline.bold())
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
             if epg.usingFallback {
                 Section {
                     Label("Showing sample channels — pull to refresh for the live list.",

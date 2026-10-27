@@ -32,12 +32,34 @@ final class AuthViewModel {
     private let usernameKey = "viu_username"
 
     init() {
-        // If we already hold a token, go straight in.
+        // If we already hold a token, go straight in — then validate it in
+        // the background. Viu tokens get revoked (e.g. by signing in on the
+        // website or another device); without this check the app would sit
+        // on a dead session forever, showing only the sample channels.
         if let token = Keychain.shared.token, !token.isEmpty {
             Task { await APIClient.shared.setToken(token) }
             state = .signedIn
+            // ContentView calls validateSession() on appear.
         } else {
             state = .signedOut
+        }
+    }
+
+    /// Confirms the stored token is still accepted. Only an explicit auth
+    /// rejection signs the user out; a network failure leaves them in.
+    func validateSession() async {
+        await APIClient.shared.setToken(Keychain.shared.token)
+        do {
+            _ = try await APIClient.shared.checkService()
+        } catch let error as APIError {
+            if case .sessionExpired = error {
+                await APIClient.shared.setToken(nil)
+                accountInfo = nil
+                errorMessage = "Your Viu session expired (it may have been signed in elsewhere). Please sign in again."
+                state = .signedOut
+            }
+        } catch {
+            // Offline or server hiccup — stay signed in.
         }
     }
 
