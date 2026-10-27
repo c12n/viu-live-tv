@@ -130,11 +130,6 @@ struct PlayerView: View {
                 AVPlayerContainer(url: url, generation: model.linkGeneration,
                                   onPlaybackError: { model.handlePlaybackFailure($0) })
                     .ignoresSafeArea()
-                    .overlay(alignment: .topLeading) {
-                        LiveBadge()
-                            .padding(.top, 14)
-                            .padding(.leading, 16)
-                    }
                     .overlay(alignment: .topTrailing) {
                         // Explicit AirPlay route picker (the player controls
                         // also offer one); external playback is enabled on
@@ -175,7 +170,9 @@ struct PlayerView: View {
                 }
             }
         }
-        .navigationTitle(model.displayName)
+        // No channel-name title over the video (requested) — the name still
+        // shows in the list, the loading state and error messages.
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {

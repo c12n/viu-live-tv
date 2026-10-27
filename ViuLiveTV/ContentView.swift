@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @Environment(AuthViewModel.self) private var auth
@@ -38,15 +39,23 @@ struct ContentView: View {
 // MARK: - Main (post-login) UI
 
 struct MainView: View {
-    @Environment(\.horizontalSizeClass) private var hSize
     @State private var selection: EPGChannel?
     @State private var showSettings = false
     @State private var tab: ChannelTab = .all
     /// iPhone navigation path — the context menu's Play pushes through here.
     @State private var path: [EPGChannel] = []
 
+    /// Layout is chosen by DEVICE, not by the current size class: on larger
+    /// iPhones the horizontal size class flips to .regular in landscape,
+    /// which used to swap layouts mid-stream and rebuild the whole view
+    /// tree — tearing down the player so the stream restarted on every
+    /// rotation. iPad always gets the split view; iPhone always the stack.
+    private var useSplitLayout: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
     var body: some View {
-        if hSize == .regular {
+        if useSplitLayout {
             splitLayout
         } else {
             stackLayout
