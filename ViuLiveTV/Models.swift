@@ -66,6 +66,37 @@ func decodeFlexibleBool(_ container: KeyedDecodingContainer<DynamicKey>, _ keys:
     return nil
 }
 
+/// Decodes HTML entities in display text. The EPG feed embeds entities in
+/// channel and programme names (e.g. "A&amp;E", "Tom &#38; Jerry"); the
+/// Android app renders them through an HTML-aware path, so decode here to
+/// match. Apply ONLY to human-readable fields, never to URLs or tokens.
+func decodeHTMLEntities(_ s: String) -> String {
+    var out = s
+    // Numeric entities first: &#65; &#x41;
+    if let regex = try? NSRegularExpression(pattern: "&#(x[0-9a-fA-F]+|[0-9]+);") {
+        let ns = out as NSString
+        let matches = regex.matches(in: out, range: NSRange(location: 0, length: ns.length))
+        for m in matches.reversed() {
+            let body = ns.substring(with: m.range(at: 1))
+            let value = (body.hasPrefix("x") || body.hasPrefix("X"))
+                ? UInt32(body.dropFirst(), radix: 16)
+                : UInt32(body)
+            if let v = value, let scalar = UnicodeScalar(v) {
+                out = (out as NSString).replacingCharacters(in: m.range, with: String(scalar))
+            }
+        }
+    }
+    // Named entities, with &amp; LAST so "&amp;lt;" becomes "&lt;", not "<".
+    out = out.replacingOccurrences(of: "&lt;", with: "<")
+             .replacingOccurrences(of: "&gt;", with: ">")
+             .replacingOccurrences(of: "&quot;", with: "\"")
+             .replacingOccurrences(of: "&apos;", with: "'")
+             .replacingOccurrences(of: "&#39;", with: "'")
+             .replacingOccurrences(of: "&nbsp;", with: " ")
+             .replacingOccurrences(of: "&amp;", with: "&")
+    return out
+}
+
 /// A CodingKey that can be built from any string — lets us probe multiple
 /// candidate key names from a single keyed container.
 struct DynamicKey: CodingKey {
@@ -188,8 +219,8 @@ struct EPGProgramme: Decodable, Identifiable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: DynamicKey.self)
-        self.name        = decodeFlexibleString(c, ["name", "title"]) ?? "—"
-        self.description = decodeFlexibleString(c, ["description", "desc"]) ?? ""
+        self.name        = decodeHTMLEntities(decodeFlexibleString(c, ["name", "title"]) ?? "—")
+        self.description = decodeHTMLEntities(decodeFlexibleString(c, ["description", "desc"]) ?? "")
         self.timezone    = decodeFlexibleString(c, ["timezone", "tz"])
         self.rawStart    = decodeFlexibleString(c, ["timestart", "start", "start_time"])
         self.rawEnd      = decodeFlexibleString(c, ["timeend", "end", "end_time", "stop"])
@@ -239,7 +270,7 @@ struct EPGChannel: Decodable, Identifiable, Hashable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: DynamicKey.self)
         self.num               = decodeFlexibleInt(c,    ["num", "number"])
-        self.name              = decodeFlexibleString(c, ["name", "title", "channel_name"]) ?? "Channel"
+        self.name              = decodeHTMLEntities(decodeFlexibleString(c, ["name", "title", "channel_name"]) ?? "Channel")
         self.streamType        = decodeFlexibleString(c, ["stream_type", "type"])
         // stream_id is required for identity; if missing, synthesize from name hash.
         self.streamId          = decodeFlexibleInt(c,    ["stream_id", "id", "channel_id"]) ?? abs((decodeFlexibleString(c, ["name"]) ?? UUID().uuidString).hashValue)
@@ -251,7 +282,7 @@ struct EPGChannel: Decodable, Identifiable, Hashable {
         self.tvArchive         = decodeFlexibleInt(c,    ["tv_archive"])
         self.directSource      = decodeFlexibleString(c, ["direct_source"])
         self.tvArchiveDuration = decodeFlexibleInt(c,    ["tv_archive_duration"])
-        self.currentShow       = decodeFlexibleString(c, ["current_show"])
+        self.currentShow       = decodeFlexibleString(c, ["current_show"]).map(decodeHTMLEntities)
         self.tags              = decodeFlexibleString(c, ["tags"])
 
         // schedule is an array; decode leniently (may be absent).
@@ -317,7 +348,7 @@ struct EPGTag: Decodable, Identifiable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: DynamicKey.self)
-        self.displayName   = decodeFlexibleString(c, ["displayname", "display_name", "name"]) ?? "Tag"
+        self.displayName   = decodeHTMLEntities(decodeFlexibleString(c, ["displayname", "display_name", "name"]) ?? "Tag")
         self.parameterName = decodeFlexibleString(c, ["parameter_name", "parameter", "param", "tag"]) ?? ""
     }
 }
