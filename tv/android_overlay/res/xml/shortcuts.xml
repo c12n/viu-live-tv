@@ -7,10 +7,12 @@
   Android TV media-search intent in the manifest is the other half of
   the voice support.)
   NOTE: the <action>/<fulfillment>/<parameter> attributes live in the
-  appactions namespace — with the android: prefix AAPT fails to link.
+  appactions namespace, which must be bound to the AAPT namespace URI
+  (http://schemas.android.com/aapt) — with the android: prefix or the
+  res-auto URI, AAPT fails resource linking ("attribute not found").
 -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:appactions="http://schemas.android.com/apk/res-auto">
+    xmlns:appactions="http://schemas.android.com/aapt">
     <capability android:name="actions.intent.PLAY_MEDIA">
         <action appactions:intentName="actions.intent.PLAY_MEDIA">
             <fulfillment appactions:value="viulivetv://play?name={name}" />
