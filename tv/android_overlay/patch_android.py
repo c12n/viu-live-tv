@@ -65,15 +65,25 @@ def main() -> None:
         raise SystemExit("no <application> in AndroidManifest.xml")
     text = text.replace("    <application", FEATURES, 1)
 
-    # LEANBACK_LAUNCHER next to the LAUNCHER category.
-    anchor = '<category android:name="android.intent.category.LAUNCHER" />'
-    if anchor not in text:
-        raise SystemExit("LAUNCHER category not found in manifest")
-    text = text.replace(
-        anchor,
-        anchor + '\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />',
-        1,
+    # LEANBACK_LAUNCHER in the main intent-filter (spacing in the
+    # generated manifest varies by Flutter version — match loosely).
+    leanback = '\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />'
+    m = re.search(
+        r'<category\s+android:name="android\.intent\.category\.LAUNCHER"\s*/>',
+        text,
     )
+    if m:
+        text = text[: m.end()] + leanback + text[m.end():]
+    else:
+        m2 = re.search(
+            r'<action\s+android:name="android\.intent\.action\.MAIN"\s*/>',
+            text,
+        )
+        if not m2:
+            raise SystemExit(
+                "neither LAUNCHER category nor MAIN action found in manifest"
+            )
+        text = text[: m2.end()] + leanback + text[m2.end():]
 
     # Activity extras (shortcuts meta-data + voice/deep-link intent filters).
     if "</activity>" not in text:
