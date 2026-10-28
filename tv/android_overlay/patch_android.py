@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Patch the flutter-create generated Android scaffold for Viu Live TV (TV):
 - app label -> "Viu Live TV"
+- uses-permission: INTERNET + ACCESS_NETWORK_STATE (the flutter-create
+  main manifest omits them — they only ship in the debug/profile
+  manifests — and without INTERNET every request fails DNS with
+  "Failed host lookup", errno 7; this bit v1.0.0)
 - application: TV banner (@drawable/banner)
 - uses-feature: leanback + touchscreen, both NOT required (runs on any
   Android TV / box, and still installs on plain Android)
@@ -49,6 +53,19 @@ def main() -> None:
     text, n = re.subn(r'android:label="[^"]*"', 'android:label="Viu Live TV"', text, count=1)
     if n != 1:
         raise SystemExit("could not patch app label in AndroidManifest.xml")
+
+    # Network permissions (see header note) right after <manifest ...>.
+    if "android.permission.INTERNET" not in text:
+        text, n = re.subn(
+            r"(<manifest\b[^>]*>)",
+            r"\1"
+            '\n    <uses-permission android:name="android.permission.INTERNET" />'
+            '\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+            text,
+            count=1,
+        )
+        if n != 1:
+            raise SystemExit("could not add network permissions to manifest")
 
     # TV banner on the application element.
     text, n = re.subn(
