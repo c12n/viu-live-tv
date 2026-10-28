@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App Actions for Google Assistant: "Play <channel> on Viu Live TV".
+  The fulfillment deep link is handled by MainActivity and resolved to
+  a channel in Dart. (Full Google TV catalog search integration would
+  additionally require a Play-published app with a media feed; the
+  Android TV media-search intent in the manifest is the other half of
+  the voice support.)
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:appactions="http://schemas.android.com/apk/res-auto">
+    <capability android:name="actions.intent.PLAY_MEDIA">
+        <action android:intentName="actions.intent.PLAY_MEDIA">
+            <fulfillment android:value="viulivetv://play?name={name}" />
+            <parameter
+                android:name="media.name"
+                android:key="name" />
+        </action>
+    </capability>
+</shortcuts>
