@@ -68,6 +68,31 @@ int? flexInt(Map<String, dynamic> json, List<String> keys) {
   return null;
 }
 
+/// Glue a programme's wall-time string to its own UTC offset, carried in
+/// the schedule entry's sibling `timezone` field (e.g. "-0400") — this is
+/// exactly what the official Android app does (it parses
+/// timestart+timezone with "yyyy-MM-dd HH:mm:ssZ"). Without the offset
+/// the times land hours away from the real instant and now/next matching
+/// fails for every channel ("No programme info" on all cards).
+String? withTzOffset(dynamic raw, String? tz) {
+  if (raw == null) return null;
+  final s = raw.toString().trim();
+  if (s.isEmpty) return s;
+  if (RegExp(r'^\d+$').hasMatch(s)) return s; // epoch — already absolute
+  if (tz == null || tz.trim().isEmpty) return s;
+  if (RegExp(r'(Z|[+-]\d{2}:?\d{2})$').hasMatch(s)) return s; // has offset
+  var t = tz.trim();
+  if (RegExp(r'^[+-]\d$').hasMatch(t)) {
+    t = '${t[0]}0${t[1]}00';
+  } else if (RegExp(r'^[+-]\d{2}$').hasMatch(t)) {
+    t = '${t}00';
+  } else if (RegExp(r'^[+-]\d{3}$').hasMatch(t)) {
+    t = '${t[0]}0${t.substring(1)}';
+  }
+  if (!RegExp(r'^[+-]\d{2}:?\d{2}$').hasMatch(t)) return s; // unknown shape
+  return '$s$t';
+}
+
 DateTime? parseEpgDate(dynamic raw) {
   if (raw == null) return null;
   if (raw is num) {
@@ -101,15 +126,17 @@ class EPGProgramme {
   });
 
   factory EPGProgramme.fromJson(Map<String, dynamic> json) {
+    final tz = flexString(json, ['timezone', 'tz', 'utc_offset']);
     return EPGProgramme(
       name: decodeHtmlEntities(
           flexString(json, ['name', 'title']) ?? '—'),
       description:
           decodeHtmlEntities(flexString(json, ['description', 'desc']) ?? ''),
-      timeStart: parseEpgDate(
-          json['timestart'] ?? json['start'] ?? json['start_time']),
-      timeEnd:
-          parseEpgDate(json['timeend'] ?? json['end'] ?? json['end_time'] ?? json['stop']),
+      timeStart: parseEpgDate(withTzOffset(
+          json['timestart'] ?? json['start'] ?? json['start_time'], tz)),
+      timeEnd: parseEpgDate(withTzOffset(
+          json['timeend'] ?? json['end'] ?? json['end_time'] ?? json['stop'],
+          tz)),
     );
   }
 

@@ -1916,9 +1916,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _buffering = false;
   bool _playing = false;
   String? _error;
+  String? _lastError;
   bool _overlay = true;
   bool _guideOpen = false;
   Timer? _hideTimer;
+  Timer? _watchdog;
+  final List<String> _logTail = [];
   final List<StreamSubscription> _subs = [];
 
   @override
@@ -1928,26 +1931,62 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _player = Player();
     _controller = VideoController(_player);
     _subs.add(_player.stream.playing.listen((v) {
-      if (mounted) setState(() => _playing = v);
+      if (!mounted) return;
+      if (v) _watchdog?.cancel();
+      setState(() {
+        _playing = v;
+        if (v && _error != null) _error = null;
+      });
     }));
     _subs.add(_player.stream.buffering.listen((v) {
       if (mounted) setState(() => _buffering = v);
     }));
     _subs.add(_player.stream.error.listen((e) {
-      if (mounted && _error == null) {
+      // mpv reports transient problems on live streams (famously
+      // "Cannot seek in this stream") and then often plays fine, so
+      // never fail the channel on an error event alone — the watchdog
+      // in _load surfaces the last error only if playback never starts.
+      _lastError = e;
+    }));
+    _subs.add(_player.stream.log.listen((log) {
+      _logTail.add('${log.level}/${log.prefix}: ${log.text}'.trim());
+      if (_logTail.length > 10) _logTail.removeAt(0);
+    }));
+    _showOverlay();
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    final platform = _player.platform;
+    if (platform is NativePlayer) {
+      // Live IPTV streams are not seekable; left to itself, mpv
+      // attempts an opening seek on some of them and errors out with
+      // "Cannot seek in this stream". Declaring streams non-seekable
+      // up front makes mpv play from the live edge instead.
+      try {
+        await platform.setProperty('force-seekable', 'no');
+        await platform.setProperty('network-timeout', '30');
+      } catch (_) {}
+    }
+    if (mounted) _load(_channel);
+  }
+
+  void _armWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = Timer(const Duration(seconds: 15), () {
+      if (mounted && !_playing && _error == null) {
         setState(() {
-          _error = 'Playback problem: $e';
+          _error = _lastError ?? 'The stream did not start.';
           _loading = false;
         });
       }
-    }));
-    _load(_channel);
-    _showOverlay();
+    });
   }
 
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _watchdog?.cancel();
     for (final s in _subs) {
       s.cancel();
     }
@@ -1964,7 +2003,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _channel = channel;
       _loading = true;
       _error = null;
+      _lastError = null;
     });
+    _armWatchdog();
     try {
       final links = await appState.api.liveLinks(channel.streamId);
       if (links.isFavorite) {
@@ -2207,6 +2248,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.white70)),
           ),
+          if (_logTail.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              constraints:
+                  const BoxConstraints(maxHeight: 130, maxWidth: 760),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white10,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: SingleChildScrollView(
+                child: Text(_logTail.join('\n'),
+                    style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                        fontFamily: 'monospace')),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
           FilledButton(
             autofocus: true,
