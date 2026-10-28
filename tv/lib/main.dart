@@ -545,8 +545,68 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _user = TextEditingController();
   final _pass = TextEditingController();
+  final _userFocus = FocusNode();
+  final _passFocus = FocusNode();
+  final _signInFocus = FocusNode();
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_loginKeys);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_loginKeys);
+    _user.dispose();
+    _pass.dispose();
+    _userFocus.dispose();
+    _passFocus.dispose();
+    _signInFocus.dispose();
+    super.dispose();
+  }
+
+  // TV remote handling for the login form. A focused TextField swallows
+  // D-pad up/down itself (text-cursor actions), so normal focus traversal
+  // can never move email -> password -> Sign In with a remote — that was
+  // reported on a real Chromecast remote ("cannot switch from the email
+  // box to the password box"). Handle the moves at the hardware-keyboard
+  // level, before focus dispatch: Down walks down the form, Up walks
+  // back. Select on a field also explicitly re-raises the on-screen
+  // keyboard, which on Google TV sometimes never appears when a field
+  // was only D-pad focused, never tapped.
+  bool _loginKeys(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      if (_userFocus.hasFocus) {
+        _passFocus.requestFocus();
+        return true;
+      }
+      if (_passFocus.hasFocus) {
+        _signInFocus.requestFocus();
+        return true;
+      }
+    } else if (key == LogicalKeyboardKey.arrowUp) {
+      if (_signInFocus.hasFocus) {
+        _passFocus.requestFocus();
+        return true;
+      }
+      if (_passFocus.hasFocus) {
+        _userFocus.requestFocus();
+        return true;
+      }
+    } else if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      if (_userFocus.hasFocus || _passFocus.hasFocus) {
+        SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+      }
+    }
+    return false;
+  }
 
   Future<void> _submit() async {
     if (_busy) return;
@@ -588,8 +648,11 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 40),
               TextField(
                 controller: _user,
+                focusNode: _userFocus,
                 autofocus: true,
                 keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => _passFocus.requestFocus(),
                 decoration: const InputDecoration(
                     labelText: 'Email / username',
                     border: OutlineInputBorder()),
@@ -597,7 +660,9 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 16),
               TextField(
                 controller: _pass,
+                focusNode: _passFocus,
                 obscureText: true,
+                textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _submit(),
                 decoration: const InputDecoration(
                     labelText: 'Password', border: OutlineInputBorder()),
@@ -610,6 +675,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
               const SizedBox(height: 28),
               FilledButton(
+                focusNode: _signInFocus,
                 onPressed: _busy ? null : _submit,
                 child: _busy
                     ? const SizedBox(
@@ -1071,11 +1137,13 @@ class TvChannelCard extends StatefulWidget {
   final EPGChannel channel;
   final List<EPGChannel> contextList;
   final bool autofocus;
+  final FocusNode? focusNode;
   const TvChannelCard({
     super.key,
     required this.channel,
     required this.contextList,
     this.autofocus = false,
+    this.focusNode,
   });
 
   @override
@@ -1103,6 +1171,7 @@ class _TvChannelCardState extends State<TvChannelCard> {
     final locked = appState.isLocked(c);
     final progress = c.nowProgress();
     return Focus(
+      focusNode: widget.focusNode,
       autofocus: widget.autofocus,
       onFocusChange: (f) => setState(() => _focused = f),
       onKeyEvent: _onKey,
@@ -1355,6 +1424,42 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   String _query = '';
+  final _fieldFocus = FocusNode();
+  final _firstCardFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_searchKeys);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_searchKeys);
+    _fieldFocus.dispose();
+    _firstCardFocus.dispose();
+    super.dispose();
+  }
+
+  // Same TV text-field trap as the login form: the search field swallows
+  // D-pad down, so the results grid was unreachable by remote. Down from
+  // the field jumps to the first result; Select re-raises the keyboard.
+  // Guarded by hasFocus — this page stays mounted inside the shell's
+  // IndexedStack, and the guard keeps the handler inert elsewhere.
+  bool _searchKeys(KeyEvent event) {
+    if (event is! KeyDownEvent || !_fieldFocus.hasFocus) return false;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _firstCardFocus.requestFocus();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1377,7 +1482,9 @@ class _SearchPageState extends State<SearchPage> {
         Padding(
           padding: const EdgeInsets.fromLTRB(36, 28, 36, 8),
           child: TextField(
+            focusNode: _fieldFocus,
             autofocus: true,
+            textInputAction: TextInputAction.search,
             onChanged: (v) => setState(() => _query = v),
             style: theme.textTheme.titleLarge,
             decoration: InputDecoration(
@@ -1411,6 +1518,7 @@ class _SearchPageState extends State<SearchPage> {
                   itemBuilder: (context, i) => TvChannelCard(
                     channel: results[i],
                     contextList: results,
+                    focusNode: i == 0 ? _firstCardFocus : null,
                   ),
                 ),
         ),
@@ -1800,6 +1908,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late final VideoController _controller;
   final FocusNode _rootFocus = FocusNode();
   final FocusNode _playButtonFocus = FocusNode();
+  final FocusNode _favButtonFocus = FocusNode();
+  final FocusNode _guideButtonFocus = FocusNode();
 
   late EPGChannel _channel;
   bool _loading = true;
@@ -1844,6 +1954,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _player.dispose();
     _rootFocus.dispose();
     _playButtonFocus.dispose();
+    _favButtonFocus.dispose();
+    _guideButtonFocus.dispose();
     super.dispose();
   }
 
@@ -1906,8 +2018,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _openGuide() {
     setState(() => _guideOpen = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // If focus is still on the player root, nudge it into the guide.
-      if (mounted && _guideOpen && _rootFocus.hasFocus) {
+      // If focus is still on the player root or an overlay button,
+      // nudge it into the guide.
+      if (mounted &&
+          _guideOpen &&
+          (_rootFocus.hasFocus ||
+              _playButtonFocus.hasFocus ||
+              _favButtonFocus.hasFocus ||
+              _guideButtonFocus.hasFocus)) {
         FocusScope.of(context).nextFocus();
       }
     });
@@ -1946,6 +2064,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       return KeyEventResult.ignored; // guide items take the rest
     }
+    // Overlay-button focus routing (deterministic remote control — the
+    // Chromecast remote has no Menu key, so Favorite and Guide must be
+    // reachable with the D-pad alone): Left/Right from the video enters
+    // the button row, Left/Right moves along it, Up returns to the
+    // video. Select is deliberately left through: the button under
+    // focus activates itself, and the root branch below ignores it.
+    final onButton = _playButtonFocus.hasFocus ||
+        _favButtonFocus.hasFocus ||
+        _guideButtonFocus.hasFocus;
+    if (onButton) {
+      if (key == LogicalKeyboardKey.arrowUp) {
+        _rootFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowRight) {
+        if (_playButtonFocus.hasFocus) {
+          _favButtonFocus.requestFocus();
+        } else if (_favButtonFocus.hasFocus) {
+          _guideButtonFocus.requestFocus();
+        }
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        if (_guideButtonFocus.hasFocus) {
+          _favButtonFocus.requestFocus();
+        } else if (_favButtonFocus.hasFocus) {
+          _playButtonFocus.requestFocus();
+        }
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowDown) {
+        return KeyEventResult.handled; // nothing below the row
+      }
+    }
     if (key == LogicalKeyboardKey.arrowUp) {
       _hop(-1);
       return KeyEventResult.handled;
@@ -1976,10 +2128,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
         key == LogicalKeyboardKey.goBack) {
       if (_overlay) {
         setState(() => _overlay = false);
+        _rootFocus.requestFocus();
         return KeyEventResult.handled;
       }
       Navigator.of(context).pop();
       return KeyEventResult.handled;
+    }
+    // From the video, Left/Right enters the overlay button row (the
+    // overlay was just (re)shown at the top of this handler).
+    if (_overlay && _rootFocus.hasFocus) {
+      if (key == LogicalKeyboardKey.arrowRight) {
+        _playButtonFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        _guideButtonFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
     }
     return KeyEventResult.ignored;
   }
@@ -2129,18 +2294,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
                 const SizedBox(width: 14),
                 _OverlayButton(
+                  focusNode: _favButtonFocus,
                   icon: fav ? Icons.favorite : Icons.favorite_border,
                   label: fav ? 'Favorited' : 'Favorite',
                   onTap: () => appState.toggleFavorite(_channel),
                 ),
                 const SizedBox(width: 14),
                 _OverlayButton(
+                  focusNode: _guideButtonFocus,
                   icon: Icons.list_rounded,
                   label: 'Guide',
                   onTap: _openGuide,
                 ),
                 const Spacer(),
-                const Text('↑↓ channel · Menu favorite · Back exit',
+                const Text('↑↓ channel · ←→ buttons · Back exit',
                     style: TextStyle(color: Colors.white54, fontSize: 14)),
               ],
             ),

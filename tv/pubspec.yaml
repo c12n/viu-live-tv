@@ -1,7 +1,7 @@
 name: viulivetv
 description: "Viu Live TV for Android TV — leanback live-TV client for Viu (api.viu.rs) subscribers: YouTube-TV-style rows, Material 3 Expressive, dark mode only, full remote support and Google Assistant voice actions. Unofficial, personal-use client."
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
