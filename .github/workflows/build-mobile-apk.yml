@@ -1,0 +1,47 @@
+name: Build Mobile APK (Flutter)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/build-mobile-apk.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build release mobile APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.8'
+          channel: stable
+          cache: true
+
+      - name: Install Pillow (icon generation)
+        run: python3 -m pip install --quiet pillow
+
+      - name: Assemble platform scaffolding and Android overlay
+        run: bash mobile/tool/setup_platforms.sh
+
+      - name: Build release APK
+        working-directory: mobile
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViuLiveTV-Mobile-APK
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
