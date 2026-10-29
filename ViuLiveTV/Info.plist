@@ -68,8 +68,8 @@
 		<string>oplayer</string>
 		<string>kmplayer</string>
 	</array>
-	<key>UILaunchStoryboardName</key>
-	<string></string>
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 <key>ITSAppUsesNonExemptEncryption</key>
