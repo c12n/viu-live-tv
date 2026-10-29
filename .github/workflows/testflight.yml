@@ -1,0 +1,70 @@
+name: TestFlight
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload:
+    name: Signed build to TestFlight
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Write App Store Connect API key
+        env:
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          echo "$ASC_API_KEY_P8_BASE64" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          test -s "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Archive with automatic signing
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project ViuLiveTV.xcodeproj \
+            -scheme ViuLiveTV \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/ViuLiveTV.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Export IPA
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/ViuLiveTV.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist ci/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          ls -lh "$RUNNER_TEMP/export"
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcrun altool --upload-app --type ios \
+            --file "$RUNNER_TEMP/export/ViuLiveTV.ipa" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
