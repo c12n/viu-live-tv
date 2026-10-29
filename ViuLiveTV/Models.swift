@@ -364,6 +364,168 @@ struct EPGChannel: Decodable, Identifiable, Hashable {
     }
 }
 
+// MARK: - Channel language detection
+
+/// Best-effort language for a channel, from its name and tags. The feed
+/// has no language field, so this layers signals, strongest first:
+/// 1. a non-Latin script in the name (Arabic, Hangul, Cyrillic, …),
+/// 2. a well-known network name (RDS/TVA are French, Univision Spanish…),
+/// 3. an explicit language word in the name or tags,
+/// 4. a country — the "| USA" style suffix on the name, else a country
+///    token in the name or tags — mapped to its main language,
+/// 5. English as the residual default for plain Latin-script names.
+enum ChannelLanguage {
+    static func detect(name: String, tags: String?) -> (code: String, label: String) {
+        // 1. Script of the name.
+        var hasKana = false, hasHan = false
+        for scalar in name.unicodeScalars {
+            switch scalar.value {
+            case 0x0600...0x06FF, 0x0750...0x077F, 0x08A0...0x08FF,
+                 0xFB50...0xFDFF, 0xFE70...0xFEFF:
+                return ("ar", "Arabic")
+            case 0x0590...0x05FF: return ("he", "Hebrew")
+            case 0x0400...0x04FF: return ("ru", "Russian")
+            case 0x0370...0x03FF: return ("el", "Greek")
+            case 0xAC00...0xD7AF, 0x1100...0x11FF, 0x3130...0x318F:
+                return ("ko", "Korean")
+            case 0x3040...0x30FF: hasKana = true
+            case 0x4E00...0x9FFF: hasHan = true
+            case 0x0E00...0x0E7F: return ("th", "Thai")
+            case 0x0900...0x097F: return ("hi", "Hindi")
+            case 0x0530...0x058F: return ("hy", "Armenian")
+            case 0x10A0...0x10FF: return ("ka", "Georgian")
+            default: break
+            }
+        }
+        if hasKana { return ("ja", "Japanese") }
+        if hasHan { return ("zh", "Chinese") }
+
+        let upperName = name.uppercased()
+        let haystack = upperName + " " + (tags ?? "")
+            .uppercased()
+            .replacingOccurrences(of: ",", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+
+        // 2. Well-known networks whose language the name alone implies.
+        let knownNetworks: [(String, (String, String))] = [
+            ("RDS", ("fr", "French")), ("TVA", ("fr", "French")),
+            ("UNIVISION", ("es", "Spanish")), ("TELEMUNDO", ("es", "Spanish")),
+            ("AZTECA", ("es", "Spanish")), ("GLOBO", ("pt", "Portuguese")),
+            ("RAI", ("it", "Italian")), ("ZDF", ("de", "German")),
+            ("TRT", ("tr", "Turkish")), ("CCTV", ("zh", "Chinese")),
+            ("NHK", ("ja", "Japanese")),
+        ]
+        for (token, lang) in knownNetworks {
+            if upperName == token || upperName.hasPrefix(token + " ") ||
+               upperName.hasPrefix(token + "|") || upperName.contains("| " + token) {
+                return lang
+            }
+        }
+
+        // 3. Explicit language words.
+        let languageWords: [(String, (String, String))] = [
+            ("SPANISH", ("es", "Spanish")), ("ESPANOL", ("es", "Spanish")),
+            ("ESPAÑOL", ("es", "Spanish")),
+            ("FRENCH", ("fr", "French")), ("FRANCAIS", ("fr", "French")),
+            ("FRANÇAIS", ("fr", "French")),
+            ("ARABIC", ("ar", "Arabic")),
+            ("GERMAN", ("de", "German")), ("DEUTSCH", ("de", "German")),
+            ("PORTUGUESE", ("pt", "Portuguese")), ("PORTUGUES", ("pt", "Portuguese")),
+            ("ITALIAN", ("it", "Italian")), ("ITALIANO", ("it", "Italian")),
+            ("RUSSIAN", ("ru", "Russian")),
+            ("TURKISH", ("tr", "Turkish")),
+            ("POLISH", ("pl", "Polish")), ("POLSKI", ("pl", "Polish")),
+            ("DUTCH", ("nl", "Dutch")), ("NEDERLANDS", ("nl", "Dutch")),
+            ("HINDI", ("hi", "Hindi")), ("URDU", ("ur", "Urdu")),
+            ("FARSI", ("fa", "Persian")), ("PERSIAN", ("fa", "Persian")),
+            ("KOREAN", ("ko", "Korean")),
+            ("CHINESE", ("zh", "Chinese")), ("MANDARIN", ("zh", "Chinese")),
+            ("CANTONESE", ("zh", "Chinese")),
+            ("JAPANESE", ("ja", "Japanese")),
+            ("VIETNAMESE", ("vi", "Vietnamese")),
+            ("INDONESIAN", ("id", "Indonesian")),
+            ("FILIPINO", ("ph", "Filipino")), ("TAGALOG", ("ph", "Filipino")),
+            ("SWEDISH", ("sv", "Swedish")), ("NORWEGIAN", ("no", "Norwegian")),
+            ("DANISH", ("da", "Danish")), ("FINNISH", ("fi", "Finnish")),
+            ("GREEK", ("el", "Greek")), ("HEBREW", ("he", "Hebrew")),
+            ("ROMANIAN", ("ro", "Romanian")), ("BULGARIAN", ("bg", "Bulgarian")),
+            ("SERBIAN", ("sr", "Serbian")), ("CROATIAN", ("hr", "Croatian")),
+            ("CZECH", ("cs", "Czech")), ("SLOVAK", ("sk", "Slovak")),
+            ("HUNGARIAN", ("hu", "Hungarian")), ("UKRAINIAN", ("uk", "Ukrainian")),
+            ("ALBANIAN", ("sq", "Albanian")), ("THAI", ("th", "Thai")),
+            ("ENGLISH", ("en", "English")),
+        ]
+        for (word, lang) in languageWords where haystack.contains(word) {
+            return lang
+        }
+
+        // 4. Country: "| XXX" suffix first, then any country token.
+        let countries: [(String, (String, String))] = [
+            ("USA", ("en", "English")), ("UNITED STATES", ("en", "English")),
+            ("UK", ("en", "English")), ("UNITED KINGDOM", ("en", "English")),
+            ("CANADA", ("en", "English")), ("AUSTRALIA", ("en", "English")),
+            ("IRELAND", ("en", "English")), ("NEW ZEALAND", ("en", "English")),
+            ("FRANCE", ("fr", "French")),
+            ("SPAIN", ("es", "Spanish")), ("MEXICO", ("es", "Spanish")),
+            ("ARGENTINA", ("es", "Spanish")), ("COLOMBIA", ("es", "Spanish")),
+            ("CHILE", ("es", "Spanish")), ("PERU", ("es", "Spanish")),
+            ("VENEZUELA", ("es", "Spanish")),
+            ("GERMANY", ("de", "German")), ("AUSTRIA", ("de", "German")),
+            ("SWITZERLAND", ("de", "German")),
+            ("BRAZIL", ("pt", "Portuguese")), ("BRASIL", ("pt", "Portuguese")),
+            ("PORTUGAL", ("pt", "Portuguese")),
+            ("ITALY", ("it", "Italian")), ("ITALIA", ("it", "Italian")),
+            ("TURKEY", ("tr", "Turkish")), ("TÜRKIYE", ("tr", "Turkish")),
+            ("POLAND", ("pl", "Polish")), ("POLSKA", ("pl", "Polish")),
+            ("NETHERLANDS", ("nl", "Dutch")), ("HOLLAND", ("nl", "Dutch")),
+            ("BELGIUM", ("nl", "Dutch")),
+            ("INDIA", ("hi", "Hindi")), ("PAKISTAN", ("ur", "Urdu")),
+            ("KOREA", ("ko", "Korean")), ("JAPAN", ("ja", "Japanese")),
+            ("CHINA", ("zh", "Chinese")), ("TAIWAN", ("zh", "Chinese")),
+            ("HONG KONG", ("zh", "Chinese")),
+            ("EGYPT", ("ar", "Arabic")), ("SAUDI", ("ar", "Arabic")),
+            ("UAE", ("ar", "Arabic")), ("EMIRATES", ("ar", "Arabic")),
+            ("MOROCCO", ("ar", "Arabic")), ("ALGERIA", ("ar", "Arabic")),
+            ("LEBANON", ("ar", "Arabic")), ("IRAQ", ("ar", "Arabic")),
+            ("JORDAN", ("ar", "Arabic")), ("KUWAIT", ("ar", "Arabic")),
+            ("QATAR", ("ar", "Arabic")), ("SYRIA", ("ar", "Arabic")),
+            ("TUNISIA", ("ar", "Arabic")), ("LIBYA", ("ar", "Arabic")),
+            ("YEMEN", ("ar", "Arabic")), ("OMAN", ("ar", "Arabic")),
+            ("BAHRAIN", ("ar", "Arabic")), ("PALESTINE", ("ar", "Arabic")),
+            ("RUSSIA", ("ru", "Russian")), ("UKRAINE", ("uk", "Ukrainian")),
+            ("GREECE", ("el", "Greek")), ("ISRAEL", ("he", "Hebrew")),
+            ("SWEDEN", ("sv", "Swedish")), ("NORWAY", ("no", "Norwegian")),
+            ("DENMARK", ("da", "Danish")), ("FINLAND", ("fi", "Finnish")),
+            ("PHILIPPINES", ("ph", "Filipino")), ("VIETNAM", ("vi", "Vietnamese")),
+            ("INDONESIA", ("id", "Indonesian")), ("THAILAND", ("th", "Thai")),
+            ("ROMANIA", ("ro", "Romanian")), ("BULGARIA", ("bg", "Bulgarian")),
+            ("SERBIA", ("sr", "Serbian")), ("CROATIA", ("hr", "Croatian")),
+            ("CZECH", ("cs", "Czech")), ("HUNGARY", ("hu", "Hungarian")),
+            ("ALBANIA", ("sq", "Albanian")), ("IRAN", ("fa", "Persian")),
+        ]
+        if let pipe = upperName.lastIndex(of: "|") {
+            let suffix = upperName[upperName.index(after: pipe)...]
+                .trimmingCharacters(in: .whitespaces)
+            for (country, lang) in countries where suffix == country || suffix.hasPrefix(country + " ") {
+                return lang
+            }
+        }
+        for (country, lang) in countries where haystack.contains(country) {
+            return lang
+        }
+
+        // 5. Residual default.
+        return ("en", "English")
+    }
+}
+
+extension EPGChannel {
+    /// Detected language: ISO-ish code ("en", "fr", "ar", …) + label.
+    var language: (code: String, label: String) {
+        ChannelLanguage.detect(name: name, tags: tags)
+    }
+}
+
 // MARK: - EPG tags
 
 /// GET /epg_tags.php?token={token}

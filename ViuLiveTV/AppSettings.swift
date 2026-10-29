@@ -120,6 +120,11 @@ final class AppSettings {
     var sportsModeEnabled: Bool {
         didSet { UserDefaults.standard.set(sportsModeEnabled, forKey: Keys.sportsMode) }
     }
+    /// Channel language filter: "" shows every language; otherwise a
+    /// language code ("en", "fr", "ar", …) from ChannelLanguage.
+    var languageFilter: String {
+        didSet { UserDefaults.standard.set(languageFilter, forKey: Keys.languageFilter) }
+    }
 
     private enum Keys {
         static let appearance = "viu_appearance_mode"
@@ -130,6 +135,7 @@ final class AppSettings {
         static let haptics = "viu_haptics_enabled"
         static let accent = "viu_accent_choice"
         static let sportsMode = "viu_sports_mode"
+        static let languageFilter = "viu_language_filter"
     }
 
     init() {
@@ -142,6 +148,7 @@ final class AppSettings {
         hapticsEnabled          = d.object(forKey: Keys.haptics) as? Bool ?? true
         accent                  = AccentChoice(rawValue: d.string(forKey: Keys.accent) ?? "") ?? .red
         sportsModeEnabled       = d.bool(forKey: Keys.sportsMode)
+        languageFilter          = d.string(forKey: Keys.languageFilter) ?? ""
     }
 }
 

@@ -32,10 +32,11 @@ struct SettingsView: View {
             Form {
                 accountSection
 
-                Section("Appearance") {
-                    Picker("Theme", selection: $settings.appearance) {
+                Section {
+                    Picker("Appearance", selection: $settings.appearance) {
                         ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
                     }
+                    .pickerStyle(.segmented)
                     Toggle("Haptic Feedback", isOn: Binding(
                         get: { settingsStore.hapticsEnabled },
                         set: { settingsStore.hapticsEnabled = $0 }
@@ -69,11 +70,28 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 2)
+                } header: {
+                    Text("Appearance")
+                } footer: {
+                    Text("System follows your iPhone's Light / Dark setting; Light and Dark lock the app to that look.")
                 }
 
                 parentalSection
 
                 sportsSection
+
+                Section {
+                    Picker("Channel Language", selection: $settings.languageFilter) {
+                        Text("All Languages").tag("")
+                        ForEach(epg.availableLanguages()) { lang in
+                            Text("\(lang.label) (\(lang.count))").tag(lang.code)
+                        }
+                    }
+                } header: {
+                    Text("Language")
+                } footer: {
+                    Text("Show only channels in one language. Every channel also carries a small badge with its detected language (EN, FR, AR, …).")
+                }
 
                 Section {
                     Picker("External Player", selection: $settings.externalPlayer) {

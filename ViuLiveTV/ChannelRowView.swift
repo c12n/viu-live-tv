@@ -36,46 +36,47 @@ struct ChannelRowView: View {
     private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             logo
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
                     if let num = channel.num {
                         Text("\(num)")
-                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .font(.subheadline.monospacedDigit().weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .frame(minWidth: 18, alignment: .leading)
+                            .frame(minWidth: 22, alignment: .leading)
                     }
                     Text(channel.name)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.title3.weight(.semibold))
                         .lineLimit(1)
+                    LanguageBadge(code: channel.language.code)
                     if isLocked {
                         Image(systemName: "lock.fill")
-                            .font(.caption2)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     if (now?.isLive(at: clock) ?? false) {
-                        LiveBadge().scaleEffect(0.8)
+                        LiveBadge().scaleEffect(0.85)
                     }
                 }
 
                 Text(nowLine)
-                    .font(.footnote)
+                    .font(.body)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
                 if let progress = now?.progress(at: clock) {
                     ProgressView(value: progress)
                         .tint(settings.accent.color)
-                        .frame(height: 3)
+                        .frame(height: 4)
                         .padding(.top, 1)
                 }
 
                 if let next {
                     Text("Next: \(next.name)")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
@@ -92,8 +93,8 @@ struct ChannelRowView: View {
             // its own star button (an indicator + overlay rendered as a
             // doubled star). Trailing padding below reserves its space.
         }
-        .padding(.vertical, 3)
-        .padding(.trailing, favoriteButtonInteractive ? 0 : 26)
+        .padding(.vertical, 7)
+        .padding(.trailing, favoriteButtonInteractive ? 0 : 30)
         .contentShape(Rectangle())
         .modifier(TapToPlayModifier(enabled: tapToPlay, action: onPlay))
         .onReceive(timer) { clock = $0 }
@@ -112,7 +113,7 @@ struct ChannelRowView: View {
     private var starImage: some View {
         Image(systemName: isFavorite ? "heart.fill" : "heart")
             .foregroundStyle(isFavorite ? .yellow : .secondary)
-            .font(.body)
+            .font(.title3)
             .contentShape(Rectangle())
     }
 
@@ -124,7 +125,7 @@ struct ChannelRowView: View {
     @ViewBuilder
     private var logo: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
             if let url = channel.logoURL {
                 AsyncImage(url: url) { phase in
@@ -143,14 +144,31 @@ struct ChannelRowView: View {
                 placeholderGlyph
             }
         }
-        .frame(width: 42, height: 42)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .frame(width: 54, height: 54)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var placeholderGlyph: some View {
         Image(systemName: "tv")
-            .font(.body)
+            .font(.title3)
             .foregroundStyle(.secondary)
+    }
+}
+
+/// Small capsule with the channel's language code (EN, FR, AR, …),
+/// sitting right after the channel name.
+private struct LanguageBadge: View {
+    @Environment(AppSettings.self) private var settings
+    let code: String
+
+    var body: some View {
+        Text(code.uppercased())
+            .font(.caption.weight(.bold))
+            .foregroundStyle(settings.accent.color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(settings.accent.color.opacity(0.18), in: Capsule())
+            .accessibilityLabel("Language: \(code.uppercased())")
     }
 }
 

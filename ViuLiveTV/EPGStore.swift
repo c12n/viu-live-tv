@@ -15,6 +15,14 @@ private final class StrategyLogBox {
     var lines: [String] = []
 }
 
+/// One language present in the lineup (Settings language filter rows).
+struct LanguageOption: Identifiable {
+    let code: String
+    let label: String
+    let count: Int
+    var id: String { code }
+}
+
 @Observable
 final class EPGStore {
     enum LoadState: Equatable {
@@ -432,6 +440,24 @@ final class EPGStore {
             $0.nowText().lowercased().contains(q) ||
             ($0.tags?.lowercased().contains(q) ?? false)
         }
+    }
+
+    /// Languages present in the loaded lineup, most channels first —
+    /// drives the Settings language filter.
+    func availableLanguages() -> [LanguageOption] {
+        var counts: [String: (label: String, count: Int)] = [:]
+        for ch in channels {
+            let lang = ch.language
+            if var entry = counts[lang.code] {
+                entry.count += 1
+                counts[lang.code] = entry
+            } else {
+                counts[lang.code] = (lang.label, 1)
+            }
+        }
+        return counts
+            .map { LanguageOption(code: $0.key, label: $0.value.label, count: $0.value.count) }
+            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.label < $1.label }
     }
 
     // MARK: Bundled fallback channel list

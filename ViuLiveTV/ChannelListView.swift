@@ -61,24 +61,31 @@ struct ChannelListView: View {
     }
 
     private var visibleChannels: [EPGChannel] {
+        var result: [EPGChannel]
         // Kids Mode wins over everything: only the Kids category,
         // in the Favorites tab too (favorites are intersected with it).
         if parental.kidsModeEnabled {
             let kids = epg.filtered(search: search, category: "KIDS")
             switch tab {
-            case .all:       return kids
-            case .favorites: return kids.filter { favorites.isFavorite($0.streamId) }
+            case .all:       result = kids
+            case .favorites: result = kids.filter { favorites.isFavorite($0.streamId) }
+            }
+        } else {
+            var base = epg.filtered(search: search, category: selectedCategory)
+            // Sports Mode with no category picked shows every sports channel.
+            if settings.sportsModeEnabled && selectedCategory == nil {
+                base = base.filter { epg.isSports($0) }
+            }
+            switch tab {
+            case .all:       result = base
+            case .favorites: result = base.filter { favorites.isFavorite($0.streamId) }
             }
         }
-        var base = epg.filtered(search: search, category: selectedCategory)
-        // Sports Mode with no category picked shows every sports channel.
-        if settings.sportsModeEnabled && selectedCategory == nil {
-            base = base.filter { epg.isSports($0) }
+        // Settings language filter composes with every mode above.
+        if !settings.languageFilter.isEmpty {
+            result = result.filter { $0.language.code == settings.languageFilter }
         }
-        switch tab {
-        case .all:       return base
-        case .favorites: return base.filter { favorites.isFavorite($0.streamId) }
-        }
+        return result
     }
 
     var body: some View {
@@ -165,7 +172,6 @@ struct ChannelListView: View {
                 pendingUnlock = nil
             }
         }
-        .simultaneousGesture(categorySwipeGesture)
         .task {
             if epg.usingFallback { await epg.refresh() }
             await favorites.reconcileWithServer()
@@ -301,10 +307,10 @@ struct ChannelListView: View {
             action()
         } label: {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
                 .foregroundStyle(isSelected ? Color.white : Color.primary)
         }
         .buttonStyle(.plain)
@@ -375,7 +381,7 @@ struct ChannelListView: View {
                 } label: {
                     Image(systemName: favorites.isFavorite(channel.streamId) ? "heart.fill" : "heart")
                         .foregroundStyle(favorites.isFavorite(channel.streamId) ? Color.yellow : Color.secondary)
-                        .font(.body)
+                        .font(.title3)
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
@@ -411,32 +417,11 @@ struct ChannelListView: View {
         }
     }
 
-    // MARK: Category swiping
-
-    /// Swipe left/right across the list to move between categories
-    /// (standard paging: left = next, right = previous). Long,
-    /// horizontal-dominant drags only, so vertical scrolling and the
-    /// row swipe actions are unaffected (the leading favorite swipe no
-    /// longer full-swipes for the same reason).
-    private var categorySwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 24)
-            .onEnded { value in
-                guard tab == .all, onChannelPicked == nil, !parental.kidsModeEnabled else { return }
-                let dx = value.translation.width
-                let dy = value.translation.height
-                guard abs(dx) > 110, abs(dx) > abs(dy) * 2.2 else { return }
-                stepCategory(forward: dx < 0)
-            }
-    }
-
-    private func stepCategory(forward: Bool) {
-        let sequence: [String?] = [nil] + displayTags.map { Optional($0.parameterName) }
-        guard let index = sequence.firstIndex(of: selectedCategory) else { return }
-        let target = forward ? index + 1 : index - 1
-        guard sequence.indices.contains(target) else { return }
-        selectedCategory = sequence[target]
-        Haptics.light()
-    }
+    // NOTE: there is deliberately no swipe-to-switch-category gesture
+    // on the list anymore (removed in v1.3.1 at the user's report): the
+    // simultaneous drag kept hijacking ordinary channel scrolling —
+    // diagonal scrolls and flicks jumped categories mid-browse.
+    // Categories switch by tapping the chips, which are larger now.
 
     private func openExternal(_ channel: EPGChannel) {
         gate(channel) { openExternalImmediately(channel) }
