@@ -25,10 +25,13 @@ jobs:
           echo "$ASC_API_KEY_P8_BASE64" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
           test -s "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
-      - name: Archive with automatic signing
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      # The team has no registered tvOS devices, so automatic signing
+      # cannot create a tvOS development profile at archive time
+      # ("Your team has no devices from which to generate a
+      # provisioning profile"). Archive unsigned instead and let the
+      # export step sign with an App Store distribution profile,
+      # which needs no devices.
+      - name: Archive (unsigned; signing happens at export)
         run: |
           set -euo pipefail
           xcodebuild archive \
@@ -37,10 +40,10 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=tvOS' \
             -archivePath "$RUNNER_TEMP/ViuLiveTV-AppleTV.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
 
       - name: Export IPA
         env:
