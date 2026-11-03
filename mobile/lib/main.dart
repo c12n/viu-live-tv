@@ -473,29 +473,63 @@ class ViuMobileApp extends StatelessWidget {
     return ListenableBuilder(
       listenable: appState,
       builder: (context, _) {
+        // Material 3 Expressive: the expressive scheme variant gives
+        // bolder, higher-energy color mappings from the same accent
+        // seed, paired with large rounded shapes below.
         final light = ColorScheme.fromSeed(
           seedColor: appState.accent.seed,
           brightness: Brightness.light,
+          dynamicSchemeVariant: DynamicSchemeVariant.expressive,
         );
         final dark = ColorScheme.fromSeed(
           seedColor: appState.accent.seed,
           brightness: Brightness.dark,
+          dynamicSchemeVariant: DynamicSchemeVariant.expressive,
         );
+        ThemeData themeFor(ColorScheme scheme, {bool isDark = false}) {
+          return ThemeData(
+            useMaterial3: true,
+            colorScheme: scheme,
+            scaffoldBackgroundColor: isDark ? const Color(0xFF0A0A0E) : null,
+            textTheme: _textTheme(isDark ? Brightness.dark : Brightness.light),
+            cardTheme: CardThemeData(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24)),
+              color: scheme.surfaceContainerLow,
+            ),
+            filledButtonTheme: FilledButtonThemeData(
+              style: FilledButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+                textStyle:
+                    const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(28)),
+              ),
+            ),
+            navigationBarTheme: NavigationBarThemeData(
+              height: 74,
+              indicatorColor: scheme.primaryContainer,
+            ),
+            navigationRailTheme: NavigationRailThemeData(
+              indicatorColor: scheme.primaryContainer,
+              selectedIconTheme:
+                  IconThemeData(color: scheme.onPrimaryContainer, size: 28),
+              unselectedIconTheme: const IconThemeData(size: 26),
+              selectedLabelTextStyle: const TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w600),
+              unselectedLabelTextStyle: const TextStyle(fontSize: 14),
+            ),
+          );
+        }
+
         return MaterialApp(
           title: 'Viu Live TV',
           debugShowCheckedModeBanner: false,
           themeMode: appState.themeMode,
-          theme: ThemeData(
-            useMaterial3: true,
-            colorScheme: light,
-            textTheme: _textTheme(Brightness.light),
-          ),
-          darkTheme: ThemeData(
-            useMaterial3: true,
-            colorScheme: dark,
-            scaffoldBackgroundColor: const Color(0xFF0A0A0E),
-            textTheme: _textTheme(Brightness.dark),
-          ),
+          theme: themeFor(light),
+          darkTheme: themeFor(dark, isDark: true),
           home: const RootGate(),
         );
       },
@@ -1104,31 +1138,178 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _tab = 0;
 
+  static const _pages = [ChannelsPage(), FavoritesPage(), SettingsPage()];
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _tab,
-        children: const [ChannelsPage(), FavoritesPage(), SettingsPage()],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(
-              icon: Icon(Icons.live_tv_outlined),
-              selectedIcon: Icon(Icons.live_tv),
-              label: 'Channels'),
-          NavigationDestination(
-              icon: Icon(Icons.favorite_border),
-              selectedIcon: Icon(Icons.favorite),
-              label: 'Favorites'),
-          NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              selectedIcon: Icon(Icons.settings),
-              label: 'Settings'),
-        ],
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Phones: bottom navigation bar. Tablets (>= 600 dp wide): a
+        // Material 3 Expressive navigation rail, extended with labels
+        // beside the icons on wide screens.
+        if (constraints.maxWidth < 600) {
+          return Scaffold(
+            body: IndexedStack(index: _tab, children: _pages),
+            bottomNavigationBar: NavigationBar(
+              selectedIndex: _tab,
+              onDestinationSelected: (i) => setState(() => _tab = i),
+              destinations: const [
+                NavigationDestination(
+                    icon: Icon(Icons.live_tv_outlined),
+                    selectedIcon: Icon(Icons.live_tv),
+                    label: 'Channels'),
+                NavigationDestination(
+                    icon: Icon(Icons.favorite_border),
+                    selectedIcon: Icon(Icons.favorite),
+                    label: 'Favorites'),
+                NavigationDestination(
+                    icon: Icon(Icons.settings_outlined),
+                    selectedIcon: Icon(Icons.settings),
+                    label: 'Settings'),
+              ],
+            ),
+          );
+        }
+        final extended = constraints.maxWidth >= 1000;
+        return Scaffold(
+          body: Row(
+            children: [
+              NavigationRail(
+                selectedIndex: _tab,
+                onDestinationSelected: (i) => setState(() => _tab = i),
+                extended: extended,
+                labelType:
+                    extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+                destinations: const [
+                  NavigationRailDestination(
+                      icon: Icon(Icons.live_tv_outlined),
+                      selectedIcon: Icon(Icons.live_tv),
+                      label: Text('Channels')),
+                  NavigationRailDestination(
+                      icon: Icon(Icons.favorite_border),
+                      selectedIcon: Icon(Icons.favorite),
+                      label: Text('Favorites')),
+                  NavigationRailDestination(
+                      icon: Icon(Icons.settings_outlined),
+                      selectedIcon: Icon(Icons.settings),
+                      label: Text('Settings')),
+                ],
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(child: IndexedStack(index: _tab, children: _pages)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// A grid of channel cards for wide screens (tablets), shared by the
+/// Channels, Favorites and Search pages.
+Widget channelGrid(List<EPGChannel> channels) {
+  return GridView.builder(
+    padding: const EdgeInsets.all(16),
+    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+      maxCrossAxisExtent: 360,
+      mainAxisExtent: 208,
+      crossAxisSpacing: 14,
+      mainAxisSpacing: 14,
+    ),
+    itemCount: channels.length,
+    itemBuilder: (context, i) =>
+        ChannelCard(channel: channels[i], contextList: channels),
+  );
+}
+
+/// A channel card for the tablet grid: big logo, name + language badge,
+/// current programme with progress, and the next programme.
+class ChannelCard extends StatelessWidget {
+  final EPGChannel channel;
+  final List<EPGChannel> contextList;
+  const ChannelCard(
+      {super.key, required this.channel, required this.contextList});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return ListenableBuilder(
+      listenable: appState,
+      builder: (context, _) {
+        final fav = appState.isFavorite(channel);
+        final locked = appState.isLocked(channel);
+        final progress = channel.nowProgress();
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => playChannel(context, channel, contextList),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      LogoTile(channel: channel, size: 56),
+                      const Spacer(),
+                      if (locked)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10, right: 2),
+                          child: Icon(Icons.lock,
+                              size: 19, color: scheme.onSurfaceVariant),
+                        ),
+                      IconButton(
+                        icon: Icon(
+                          fav ? Icons.favorite : Icons.favorite_border,
+                          color:
+                              fav ? const Color(0xFFFFD60A) : scheme.outline,
+                          size: 26,
+                        ),
+                        onPressed: () => appState.toggleFavorite(channel),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(channel.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium),
+                      ),
+                      const SizedBox(width: 8),
+                      LanguageBadge(code: channel.language.code),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(channel.nowText(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyLarge
+                          ?.copyWith(color: scheme.onSurfaceVariant)),
+                  if (progress != null) ...[
+                    const SizedBox(height: 6),
+                    LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 4,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ],
+                  const SizedBox(height: 3),
+                  Text('Next: ${channel.nextProgramme()?.name ?? '—'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: scheme.onSurfaceVariant)),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1175,6 +1356,7 @@ class _ChannelsPageState extends State<ChannelsPage> {
         }
         final channels =
             selected == null ? <EPGChannel>[] : appState.channelsFor(selected);
+        final width = MediaQuery.sizeOf(context).width;
         return Scaffold(
           appBar: AppBar(
             title: const Text('Viu Live TV'),
@@ -1188,84 +1370,133 @@ class _ChannelsPageState extends State<ChannelsPage> {
               _castAppBarButton(context),
             ],
           ),
-          body: Column(
-            children: [
-              if (appState.epgError != null && appState.all.isEmpty)
-                Expanded(
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(appState.epgError!,
-                              textAlign: TextAlign.center),
-                          const SizedBox(height: 16),
-                          FilledButton(
-                            onPressed: () => appState.loadEpg(),
-                            child: const Text('Retry'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                )
-              else ...[
-                SizedBox(
-                  height: 56,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
-                    itemCount: tags.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (context, i) {
-                      final tag = tags[i];
-                      final isSel = tag.parameterName == _selectedParam;
-                      return ChoiceChip(
-                        label: Text(tag.displayName,
-                            style: const TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w600)),
-                        selected: isSel,
-                        onSelected: (_) =>
-                            setState(() => _selectedParam = tag.parameterName),
-                      );
-                    },
-                  ),
-                ),
-                Expanded(
-                  child: appState.epgLoading && appState.all.isEmpty
-                      ? const Center(child: CircularProgressIndicator())
-                      : channels.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(24),
-                                child: Text(
-                                  appState.languageFilter.isEmpty
-                                      ? 'No channels in this category.'
-                                      : 'No channels in this language here. Change it in Settings → Channel Language.',
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            )
-                          : RefreshIndicator(
-                              onRefresh: () => appState.loadEpg(),
-                              child: ListView.separated(
-                                itemCount: channels.length,
-                                separatorBuilder: (_, __) =>
-                                    const Divider(height: 1, indent: 84),
-                                itemBuilder: (context, i) => ChannelRow(
-                                  channel: channels[i],
-                                  contextList: channels,
-                                ),
-                              ),
-                            ),
-                ),
-              ],
-            ],
-          ),
+          body: appState.epgError != null && appState.all.isEmpty
+              ? _errorView()
+              : width >= 600
+                  ? _wideBody(tags, channels, width)
+                  : _phoneBody(tags, channels),
         );
       },
+    );
+  }
+
+  Widget _errorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(appState.epgError!, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => appState.loadEpg(),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _results(List<EPGChannel> channels, {required bool grid}) {
+    if (appState.epgLoading && appState.all.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (channels.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            appState.languageFilter.isEmpty
+                ? 'No channels in this category.'
+                : 'No channels in this language here. Change it in Settings → Channel Language.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: () => appState.loadEpg(),
+      child: grid
+          ? channelGrid(channels)
+          : ListView.separated(
+              itemCount: channels.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(height: 1, indent: 84),
+              itemBuilder: (context, i) => ChannelRow(
+                channel: channels[i],
+                contextList: channels,
+              ),
+            ),
+    );
+  }
+
+  /// Phone layout: category chips across the top, channel list below.
+  Widget _phoneBody(List<EPGTag> tags, List<EPGChannel> channels) {
+    return Column(
+      children: [
+        SizedBox(
+          height: 56,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            itemCount: tags.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final tag = tags[i];
+              final isSel = tag.parameterName == _selectedParam;
+              return ChoiceChip(
+                label: Text(tag.displayName,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w600)),
+                selected: isSel,
+                onSelected: (_) =>
+                    setState(() => _selectedParam = tag.parameterName),
+              );
+            },
+          ),
+        ),
+        Expanded(child: _results(channels, grid: false)),
+      ],
+    );
+  }
+
+  /// Tablet layout: the categories become a proper list in a left pane
+  /// (with channel counts), and the channels fill the rest — a list on
+  /// smaller tablets, a card grid on large ones.
+  Widget _wideBody(List<EPGTag> tags, List<EPGChannel> channels, double width) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        SizedBox(
+          width: 300,
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            itemCount: tags.length,
+            itemBuilder: (context, i) {
+              final tag = tags[i];
+              final isSel = tag.parameterName == _selectedParam;
+              return ListTile(
+                title: Text(tag.displayName,
+                    style: const TextStyle(
+                        fontSize: 17, fontWeight: FontWeight.w500)),
+                trailing: Text('${appState.channelsFor(tag).length}',
+                    style: TextStyle(color: scheme.onSurfaceVariant)),
+                selected: isSel,
+                selectedTileColor:
+                    scheme.primaryContainer.withValues(alpha: 0.55),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                onTap: () =>
+                    setState(() => _selectedParam = tag.parameterName),
+              );
+            },
+          ),
+        ),
+        const VerticalDivider(width: 1),
+        Expanded(child: _results(channels, grid: width >= 1024)),
+      ],
     );
   }
 }
@@ -1296,13 +1527,15 @@ class FavoritesPage extends StatelessWidget {
                     ),
                   ),
                 )
-              : ListView.separated(
-                  itemCount: favs.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(height: 1, indent: 84),
-                  itemBuilder: (context, i) =>
-                      ChannelRow(channel: favs[i], contextList: favs),
-                ),
+              : MediaQuery.sizeOf(context).width >= 840
+                  ? channelGrid(favs)
+                  : ListView.separated(
+                      itemCount: favs.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 1, indent: 84),
+                      itemBuilder: (context, i) =>
+                          ChannelRow(channel: favs[i], contextList: favs),
+                    ),
         );
       },
     );
@@ -1353,15 +1586,17 @@ class _SearchPageState extends State<SearchPage> {
                 ? const Center(child: Text('Type to search all channels.'))
                 : shown.isEmpty
                     ? const Center(child: Text('No channels match.'))
-                    : ListView.separated(
-                        itemCount: shown.length,
-                        separatorBuilder: (_, __) =>
-                            const Divider(height: 1, indent: 84),
-                        itemBuilder: (context, i) => ChannelRow(
-                          channel: shown[i],
-                          contextList: shown,
-                        ),
-                      ),
+                    : MediaQuery.sizeOf(context).width >= 840
+                        ? channelGrid(shown)
+                        : ListView.separated(
+                            itemCount: shown.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1, indent: 84),
+                            itemBuilder: (context, i) => ChannelRow(
+                              channel: shown[i],
+                              contextList: shown,
+                            ),
+                          ),
           ),
         ],
       ),
@@ -2077,9 +2312,14 @@ class SettingsPage extends StatelessWidget {
             }
           }
         }
+        // On tablets, keep the settings column a comfortable reading
+        // width instead of stretching edge to edge.
+        final sidePad = (MediaQuery.sizeOf(context).width - 760) / 2;
         return Scaffold(
           appBar: AppBar(title: const Text('Settings')),
           body: ListView(
+            padding:
+                EdgeInsets.symmetric(horizontal: sidePad > 0 ? sidePad : 0),
             children: [
               _SectionHeader('Account'),
               ListTile(
@@ -2291,7 +2531,7 @@ class SettingsPage extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  'Viu Live TV for Android 1.0.0\n'
+                  'Viu Live TV for Android 1.1.0\n'
                   'The project is unofficial & strictly a hobby project.\n'
                   'Copyright (c) 2026 c12n Apps',
                   textAlign: TextAlign.center,
