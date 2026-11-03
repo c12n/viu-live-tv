@@ -1,0 +1,55 @@
+name: Build Apple TV IPA
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'appletv/**'
+      - 'ViuLiveTV/**'
+      - '.github/workflows/build-appletv.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned Apple TV IPA
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build and archive (no code signing)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project appletv/ViuLiveTV-AppleTV.xcodeproj \
+            -scheme ViuLiveTV-AppleTV \
+            -configuration Release \
+            -destination 'generic/platform=tvOS' \
+            -archivePath "$RUNNER_TEMP/ViuLiveTV-AppleTV.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/ViuLiveTV-AppleTV.xcarchive/Products/Applications/ViuLiveTV-AppleTV.app"
+          test -d "$APP_PATH"
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          mkdir -p build-artifacts
+          zip -r "build-artifacts/ViuLiveTV-AppleTV.ipa" Payload
+          ls -lh build-artifacts/ViuLiveTV-AppleTV.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViuLiveTV-AppleTV-IPA
+          path: build-artifacts/ViuLiveTV-AppleTV.ipa
+          if-no-files-found: error
