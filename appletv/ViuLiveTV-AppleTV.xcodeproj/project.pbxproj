@@ -21,6 +21,7 @@
 		E10000000000000000000002 /* TVHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000002 /* TVHomeView.swift */; };
 		E10000000000000000000003 /* TVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000003 /* TVPlayerView.swift */; };
 		E10000000000000000000004 /* TVSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000004 /* TVSettingsView.swift */; };
+		E10000000000000000000090 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000090 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +39,7 @@
 		D10000000000000000000002 /* TVHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVHomeView.swift; sourceTree = "<group>"; };
 		D10000000000000000000003 /* TVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVPlayerView.swift; sourceTree = "<group>"; };
 		D10000000000000000000004 /* TVSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVSettingsView.swift; sourceTree = "<group>"; };
+		D10000000000000000000090 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D10000000000000000000091 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		555555555555555555555555 /* ViuLiveTV-AppleTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ViuLiveTV-AppleTV.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -86,6 +88,7 @@
 				D10000000000000000000002 /* TVHomeView.swift */,
 				D10000000000000000000003 /* TVPlayerView.swift */,
 				D10000000000000000000004 /* TVSettingsView.swift */,
+				D10000000000000000000090 /* Assets.xcassets */,
 				D10000000000000000000091 /* Info.plist */,
 			);
 			name = "ViuLiveTV-AppleTV";
@@ -157,6 +160,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E10000000000000000000090 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -208,6 +212,7 @@
 		999999999999999999999993 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = QD29U585ZA;
 				CURRENT_PROJECT_VERSION = 1;
@@ -232,6 +237,7 @@
 		999999999999999999999994 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = QD29U585ZA;
 				CURRENT_PROJECT_VERSION = 1;
