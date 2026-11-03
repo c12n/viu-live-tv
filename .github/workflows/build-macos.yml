@@ -1,0 +1,53 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'macos/**'
+      - 'ViuLiveTV/**'
+      - '.github/workflows/build-macos.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build macOS app zip
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build and archive (no code signing)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project macos/ViuLiveTV-macOS.xcodeproj \
+            -scheme ViuLiveTV-macOS \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$RUNNER_TEMP/ViuLiveTV-macOS.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package app zip
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/ViuLiveTV-macOS.xcarchive/Products/Applications/ViuLiveTV.app"
+          test -d "$APP_PATH"
+          mkdir -p build-artifacts
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "build-artifacts/ViuLiveTV-macOS.zip"
+          ls -lh build-artifacts/ViuLiveTV-macOS.zip
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViuLiveTV-macOS
+          path: build-artifacts/ViuLiveTV-macOS.zip
+          if-no-files-found: error
