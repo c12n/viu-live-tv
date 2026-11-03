@@ -22,6 +22,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api.dart';
+import 'language.dart';
 
 // ---------------------------------------------------------------------------
 // Accents (same curated set as the iOS app; each reads well on dark)
@@ -77,7 +78,11 @@ class AppState extends ChangeNotifier {
   Set<int> favorites = {};
   Set<int> locked = {};
 
+  /// Recently watched channel ids, newest first (capped at 12).
+  List<int> recentIds = [];
+
   int accentIndex = 0;
+  String languageFilter = ''; // '' = all languages
   Set<String> hiddenTags = {};
   List<String> tagOrder = [];
   bool sportsMode = false;
@@ -124,23 +129,59 @@ class AppState extends ChangeNotifier {
     return list;
   }
 
+  List<EPGChannel> _applyLanguage(List<EPGChannel> list) {
+    if (languageFilter.isEmpty) return list;
+    return list.where((c) => c.language.code == languageFilter).toList();
+  }
+
   List<EPGChannel> channelsFor(EPGTag tag) {
     if (tag.parameterName == 'ALL' && sportsMode && !kidsMode) {
-      return all.where((c) => c.tags.any(isSportsTag)).toList();
+      return _applyLanguage(
+          all.where((c) => c.tags.any(isSportsTag)).toList());
     }
-    return byTag[tag.parameterName] ??
-        all.where((c) => c.tags.contains(tag.parameterName)).toList();
+    return _applyLanguage(byTag[tag.parameterName] ??
+        all.where((c) => c.tags.contains(tag.parameterName)).toList());
   }
 
   List<EPGChannel> favoriteChannels() {
-    final favs = all.where((c) => favorites.contains(c.streamId)).toList();
+    var favs = all.where((c) => favorites.contains(c.streamId)).toList();
     if (kidsMode) {
-      return favs.where((c) => c.tags.contains('KIDS')).toList();
+      favs = favs.where((c) => c.tags.contains('KIDS')).toList();
     }
     if (sportsMode) {
-      return favs.where((c) => c.tags.any(isSportsTag)).toList();
+      favs = favs.where((c) => c.tags.any(isSportsTag)).toList();
     }
-    return favs;
+    return _applyLanguage(favs);
+  }
+
+  // MARK: Recently watched
+
+  Future<void> recordRecent(int streamId) async {
+    recentIds.remove(streamId);
+    recentIds.insert(0, streamId);
+    if (recentIds.length > 12) {
+      recentIds = recentIds.sublist(0, 12);
+    }
+    await _prefs?.setStringList(
+        'viu_recents', recentIds.map((e) => e.toString()).toList());
+    notifyListeners();
+  }
+
+  /// The Recently Watched row contents, with the same Kids / Sports /
+  /// language visibility rules as the rest of Home.
+  List<EPGChannel> recentChannels() {
+    final out = <EPGChannel>[];
+    for (final id in recentIds) {
+      final c = channelById(id);
+      if (c == null) continue;
+      if (kidsMode && !c.tags.contains('KIDS')) continue;
+      if (sportsMode && !c.tags.any(isSportsTag)) continue;
+      if (languageFilter.isNotEmpty && c.language.code != languageFilter) {
+        continue;
+      }
+      out.add(c);
+    }
+    return out;
   }
 
   // MARK: Persistence + boot
@@ -158,9 +199,14 @@ class AppState extends ChangeNotifier {
         .map(int.tryParse)
         .whereType<int>()
         .toSet();
+    recentIds = (prefs.getStringList('viu_recents') ?? [])
+        .map(int.tryParse)
+        .whereType<int>()
+        .toList();
     hiddenTags = (prefs.getStringList('viu_hidden_tags') ?? []).toSet();
     tagOrder = prefs.getStringList('viu_tag_order') ?? [];
     accentIndex = prefs.getInt('viu_accent') ?? 0;
+    languageFilter = prefs.getString('viu_language_filter') ?? '';
     sportsMode = prefs.getBool('viu_sports_mode') ?? false;
     kidsMode = prefs.getBool('viu_kids_mode') ?? false;
     parentalEnabled = prefs.getBool('viu_parental_enabled') ?? false;
@@ -183,6 +229,7 @@ class AppState extends ChangeNotifier {
     await p.setStringList('viu_hidden_tags', hiddenTags.toList());
     await p.setStringList('viu_tag_order', tagOrder);
     await p.setInt('viu_accent', accentIndex);
+    await p.setString('viu_language_filter', languageFilter);
     await p.setBool('viu_sports_mode', sportsMode);
     await p.setBool('viu_kids_mode', kidsMode);
     await p.setBool('viu_parental_enabled', parentalEnabled);
@@ -382,6 +429,12 @@ class AppState extends ChangeNotifier {
 
   Future<void> setAccent(int i) async {
     accentIndex = i;
+    await _saveSettings();
+    notifyListeners();
+  }
+
+  Future<void> setLanguageFilter(String code) async {
+    languageFilter = code;
     await _saveSettings();
     notifyListeners();
   }
@@ -1260,10 +1313,32 @@ class _TvChannelCardState extends State<TvChannelCard> {
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(14, 10, 14, 2),
-                    child: Text(c.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium),
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(c.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary
+                                .withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(c.language.code.toUpperCase(),
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.5,
+                                  color: theme.colorScheme.primary)),
+                        ),
+                      ],
+                    ),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
@@ -1328,7 +1403,9 @@ class ChannelsHomePage extends StatelessWidget {
     }
     final visible = appState.visibleTags();
     final favs = appState.favoriteChannels();
+    final recents = appState.recentChannels();
     final sections = <(String, List<EPGChannel>)>[
+      if (recents.isNotEmpty) ('Recently Watched', recents),
       if (favs.isNotEmpty) ('Favorites', favs),
       for (final t in visible)
         if (appState.channelsFor(t).isNotEmpty)
@@ -1468,8 +1545,15 @@ class _SearchPageState extends State<SearchPage> {
     var results = q.isEmpty
         ? <EPGChannel>[]
         : appState.all
-            .where((c) => c.name.toLowerCase().contains(q))
+            .where((c) =>
+                c.name.toLowerCase().contains(q) ||
+                c.schedule.any((p) => p.name.toLowerCase().contains(q)))
             .toList();
+    if (appState.languageFilter.isNotEmpty) {
+      results = results
+          .where((c) => c.language.code == appState.languageFilter)
+          .toList();
+    }
     if (appState.kidsMode) {
       results = results.where((c) => c.tags.contains('KIDS')).toList();
     }
@@ -1488,7 +1572,7 @@ class _SearchPageState extends State<SearchPage> {
             onChanged: (v) => setState(() => _query = v),
             style: theme.textTheme.titleLarge,
             decoration: InputDecoration(
-              hintText: 'Search channels — or ask the Assistant: “Play … on Viu Live TV”',
+              hintText: 'Search channels & programmes — or ask the Assistant: “Play … on Viu Live TV”',
               prefixIcon: const Icon(Icons.search, size: 28),
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16)),
@@ -1745,6 +1829,16 @@ class SettingsPage extends StatelessWidget {
               child: Switch(value: appState.sportsMode, onChanged: (_) {})),
           onTap: () => appState.setSportsMode(!appState.sportsMode),
         ),
+        const _SectionTitle('Language'),
+        _SettingRow(
+          title: 'Channel Language',
+          subtitle: appState.languageFilter.isEmpty
+              ? 'All languages — every channel also shows a language badge'
+              : 'Filtered — change to see other languages',
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const LanguageSettingsPage())),
+        ),
         const _SectionTitle('Channel Categories'),
         _SettingRow(
           title: 'Show / Hide Categories',
@@ -1782,11 +1876,54 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(height: 24),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Text('Viu Live TV for Android TV · version 1.0.0 · Dark mode only',
+          child: Text('Viu Live TV for Android TV · version 1.5.0 · Dark mode only',
               style:
                   theme.textTheme.bodySmall?.copyWith(color: Colors.white38)),
         ),
       ],
+    );
+  }
+}
+
+class LanguageSettingsPage extends StatelessWidget {
+  const LanguageSettingsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) {
+          final options = availableLanguages(appState.all);
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 36, 32),
+            children: [
+              Text('Channel Language', style: theme.textTheme.headlineMedium),
+              const SizedBox(height: 8),
+              _SettingRow(
+                title: 'All Languages',
+                subtitle: '${appState.all.length} channels',
+                autofocus: appState.languageFilter.isEmpty,
+                trailing: appState.languageFilter.isEmpty
+                    ? Icon(Icons.check, color: theme.colorScheme.primary)
+                    : null,
+                onTap: () => appState.setLanguageFilter(''),
+              ),
+              for (final o in options)
+                _SettingRow(
+                  title: o.label,
+                  subtitle: '${o.count} channels',
+                  autofocus: appState.languageFilter == o.code,
+                  trailing: appState.languageFilter == o.code
+                      ? Icon(Icons.check, color: theme.colorScheme.primary)
+                      : null,
+                  onTap: () => appState.setLanguageFilter(o.code),
+                ),
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -1909,9 +2046,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final FocusNode _rootFocus = FocusNode();
   final FocusNode _playButtonFocus = FocusNode();
   final FocusNode _favButtonFocus = FocusNode();
+  final FocusNode _lastButtonFocus = FocusNode();
   final FocusNode _guideButtonFocus = FocusNode();
+  final FocusNode _multiButtonFocus = FocusNode();
 
   late EPGChannel _channel;
+  EPGChannel? _previous;
   bool _loading = true;
   bool _buffering = false;
   bool _playing = false;
@@ -1994,11 +2134,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _rootFocus.dispose();
     _playButtonFocus.dispose();
     _favButtonFocus.dispose();
+    _lastButtonFocus.dispose();
     _guideButtonFocus.dispose();
+    _multiButtonFocus.dispose();
     super.dispose();
   }
 
   Future<void> _load(EPGChannel channel) async {
+    if (channel.streamId != _channel.streamId) {
+      _previous = _channel;
+    }
+    unawaited(appState.recordRecent(channel.streamId));
     setState(() {
       _channel = channel;
       _loading = true;
@@ -2066,10 +2212,39 @@ class _PlayerScreenState extends State<PlayerScreen> {
           (_rootFocus.hasFocus ||
               _playButtonFocus.hasFocus ||
               _favButtonFocus.hasFocus ||
-              _guideButtonFocus.hasFocus)) {
+              _lastButtonFocus.hasFocus ||
+              _guideButtonFocus.hasFocus ||
+              _multiButtonFocus.hasFocus)) {
         FocusScope.of(context).nextFocus();
       }
     });
+  }
+
+  /// Last Channel swap: jump back to the previous channel (which
+  /// then becomes current, so it swaps back and forth).
+  Future<void> _swapToPrevious() async {
+    final target = _previous;
+    if (target == null) return;
+    if (!await ensureUnlocked(context, target)) return;
+    if (mounted) _load(target);
+  }
+
+  Future<void> _openMultiview() async {
+    final wasPlaying = _playing;
+    await _player.pause();
+    if (!mounted) return;
+    final picked = await Navigator.of(context).push<EPGChannel>(
+      MaterialPageRoute(builder: (_) => MultiviewScreen(initial: _channel)),
+    );
+    if (!mounted) return;
+    _rootFocus.requestFocus();
+    if (picked != null && picked.streamId != _channel.streamId) {
+      if (await ensureUnlocked(context, picked)) {
+        if (mounted) _load(picked);
+      }
+    } else if (wasPlaying) {
+      _player.play();
+    }
   }
 
   Future<void> _hop(int delta) async {
@@ -2113,7 +2288,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // focus activates itself, and the root branch below ignores it.
     final onButton = _playButtonFocus.hasFocus ||
         _favButtonFocus.hasFocus ||
-        _guideButtonFocus.hasFocus;
+        _lastButtonFocus.hasFocus ||
+        _guideButtonFocus.hasFocus ||
+        _multiButtonFocus.hasFocus;
     if (onButton) {
       if (key == LogicalKeyboardKey.arrowUp) {
         _rootFocus.requestFocus();
@@ -2123,12 +2300,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (_playButtonFocus.hasFocus) {
           _favButtonFocus.requestFocus();
         } else if (_favButtonFocus.hasFocus) {
+          (_previous != null ? _lastButtonFocus : _guideButtonFocus)
+              .requestFocus();
+        } else if (_lastButtonFocus.hasFocus) {
           _guideButtonFocus.requestFocus();
+        } else if (_guideButtonFocus.hasFocus) {
+          _multiButtonFocus.requestFocus();
         }
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.arrowLeft) {
-        if (_guideButtonFocus.hasFocus) {
+        if (_multiButtonFocus.hasFocus) {
+          _guideButtonFocus.requestFocus();
+        } else if (_guideButtonFocus.hasFocus) {
+          (_previous != null ? _lastButtonFocus : _favButtonFocus)
+              .requestFocus();
+        } else if (_lastButtonFocus.hasFocus) {
           _favButtonFocus.requestFocus();
         } else if (_favButtonFocus.hasFocus) {
           _playButtonFocus.requestFocus();
@@ -2154,6 +2341,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     if (key == LogicalKeyboardKey.keyG) {
       _openGuide();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyM) {
+      _openMultiview();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyL) {
+      _swapToPrevious();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.select ||
@@ -2183,7 +2378,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.arrowLeft) {
-        _guideButtonFocus.requestFocus();
+        _multiButtonFocus.requestFocus();
         return KeyEventResult.handled;
       }
     }
@@ -2359,12 +2554,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   label: fav ? 'Favorited' : 'Favorite',
                   onTap: () => appState.toggleFavorite(_channel),
                 ),
+                if (_previous != null) ...[
+                  const SizedBox(width: 14),
+                  _OverlayButton(
+                    focusNode: _lastButtonFocus,
+                    icon: Icons.swap_horiz_rounded,
+                    label: 'Last',
+                    onTap: _swapToPrevious,
+                  ),
+                ],
                 const SizedBox(width: 14),
                 _OverlayButton(
                   focusNode: _guideButtonFocus,
                   icon: Icons.list_rounded,
                   label: 'Guide',
                   onTap: _openGuide,
+                ),
+                const SizedBox(width: 14),
+                _OverlayButton(
+                  focusNode: _multiButtonFocus,
+                  icon: Icons.grid_view_rounded,
+                  label: 'Multiview',
+                  onTap: _openMultiview,
                 ),
                 const Spacer(),
                 const Text('↑↓ channel · ←→ buttons · Back exit',
@@ -2466,6 +2677,470 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Multiview (Android TV): up to four channels at once, D-pad driven
+// ---------------------------------------------------------------------------
+
+class MultiviewScreen extends StatefulWidget {
+  final EPGChannel initial;
+  const MultiviewScreen({super.key, required this.initial});
+
+  @override
+  State<MultiviewScreen> createState() => _MultiviewScreenState();
+}
+
+class _MultiviewScreenState extends State<MultiviewScreen> {
+  late final List<EPGChannel?> _slots = [widget.initial, null, null, null];
+  int _audioSlot = 0;
+
+  Future<void> _pickForSlot(int slot) async {
+    final picked = await Navigator.of(context).push<EPGChannel>(
+      MaterialPageRoute(builder: (_) => const MultiviewPickerPage()),
+    );
+    if (picked == null) return;
+    if (!await ensureUnlocked(context, picked)) return;
+    if (mounted) {
+      setState(() {
+        _slots[slot] = picked;
+        _audioSlot = slot;
+      });
+    }
+  }
+
+  // Menu / F clears the pane that currently holds focus (and audio).
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        (event.logicalKey == LogicalKeyboardKey.contextMenu ||
+            event.logicalKey == LogicalKeyboardKey.keyF)) {
+      if (_slots[_audioSlot] != null) {
+        setState(() => _slots[_audioSlot] = null);
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Focus(
+        onKeyEvent: _onKey,
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('Multiview',
+                      style: theme.textTheme.headlineMedium
+                          ?.copyWith(color: Colors.white)),
+                  const Spacer(),
+                  const Text(
+                      'OK = full screen · Menu = remove focused pane · Back = exit',
+                      style: TextStyle(color: Colors.white54, fontSize: 15)),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Expanded(
+                child: GridView.builder(
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    childAspectRatio: 16 / 9,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                  ),
+                  itemCount: 4,
+                  itemBuilder: (context, i) {
+                    final channel = _slots[i];
+                    if (channel == null) {
+                      return _EmptyPane(
+                        autofocus: i == 1,
+                        onTap: () => _pickForSlot(i),
+                        onFocus: () => setState(() => _audioSlot = i),
+                      );
+                    }
+                    return _TvMultiviewCell(
+                      key: ValueKey('${channel.streamId}-$i'),
+                      channel: channel,
+                      audio: _audioSlot == i,
+                      autofocus: i == 0,
+                      onFocus: () => setState(() => _audioSlot = i),
+                      onTap: () => Navigator.of(context).pop(channel),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyPane extends StatefulWidget {
+  final bool autofocus;
+  final VoidCallback onTap;
+  final VoidCallback onFocus;
+  const _EmptyPane({
+    required this.autofocus,
+    required this.onTap,
+    required this.onFocus,
+  });
+
+  @override
+  State<_EmptyPane> createState() => _EmptyPaneState();
+}
+
+class _EmptyPaneState extends State<_EmptyPane> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Focus(
+      autofocus: widget.autofocus,
+      onFocusChange: (f) {
+        setState(() => _focused = f);
+        if (f) widget.onFocus();
+      },
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: _focused ? theme.colorScheme.primary : Colors.white24,
+                width: _focused ? 3 : 1,
+              ),
+            ),
+            child: const Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.add, color: Colors.white70, size: 40),
+                SizedBox(height: 8),
+                Text('Add Channel',
+                    style: TextStyle(color: Colors.white70, fontSize: 18)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One Multiview pane: its own media_kit player, audible only while
+/// it holds D-pad focus.
+class _TvMultiviewCell extends StatefulWidget {
+  final EPGChannel channel;
+  final bool audio;
+  final bool autofocus;
+  final VoidCallback onFocus;
+  final VoidCallback onTap;
+  const _TvMultiviewCell({
+    super.key,
+    required this.channel,
+    required this.audio,
+    required this.autofocus,
+    required this.onFocus,
+    required this.onTap,
+  });
+
+  @override
+  State<_TvMultiviewCell> createState() => _TvMultiviewCellState();
+}
+
+class _TvMultiviewCellState extends State<_TvMultiviewCell> {
+  late final Player _player;
+  late final VideoController _controller;
+  bool _focused = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = Player();
+    _controller = VideoController(_player);
+    _init();
+  }
+
+  Future<void> _init() async {
+    final platform = _player.platform;
+    if (platform is NativePlayer) {
+      try {
+        await platform.setProperty('force-seekable', 'no');
+        await platform.setProperty('network-timeout', '30');
+      } catch (_) {}
+    }
+    await _player.setVolume(widget.audio ? 100 : 0);
+    if (mounted) _load();
+  }
+
+  @override
+  void didUpdateWidget(_TvMultiviewCell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.audio != widget.audio) {
+      _player.setVolume(widget.audio ? 100 : 0);
+    }
+    if (oldWidget.channel.streamId != widget.channel.streamId) {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    setState(() => _failed = false);
+    try {
+      final links = await appState.api.liveLinks(widget.channel.streamId);
+      final url = links.liveLink;
+      if (url == null || url.isEmpty) {
+        throw const ApiFailure('No playable link.');
+      }
+      await _player.open(
+        Media(url, httpHeaders: const {'User-Agent': kUserAgent}),
+        play: true,
+      );
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Focus(
+      autofocus: widget.autofocus,
+      onFocusChange: (f) {
+        setState(() => _focused = f);
+        if (f) widget.onFocus();
+      },
+      child: Material(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: widget.onTap,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color:
+                    _focused ? theme.colorScheme.primary : Colors.white24,
+                width: _focused ? 3 : 1,
+              ),
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Video(
+                  controller: _controller,
+                  controls: (state) => const SizedBox.shrink(),
+                  fit: BoxFit.contain,
+                ),
+                if (_failed)
+                  const Center(
+                    child: Text('Couldn\'t load this channel',
+                        style: TextStyle(color: Colors.white70, fontSize: 16)),
+                  ),
+                Positioned(
+                  left: 12,
+                  bottom: 10,
+                  right: 12,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                            color: Colors.red, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(widget.channel.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                shadows: [
+                                  Shadow(color: Colors.black, blurRadius: 4)
+                                ])),
+                      ),
+                      if (widget.audio)
+                        const Icon(Icons.volume_up,
+                            color: Colors.white70, size: 19),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Channel picker for an empty Multiview pane: a focusable grid that
+/// pops with the chosen channel.
+class MultiviewPickerPage extends StatelessWidget {
+  const MultiviewPickerPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    var channels = appState.all;
+    if (appState.kidsMode) {
+      channels = channels.where((c) => c.tags.contains('KIDS')).toList();
+    }
+    if (appState.languageFilter.isNotEmpty) {
+      channels = channels
+          .where((c) => c.language.code == appState.languageFilter)
+          .toList();
+    }
+    return Scaffold(
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(36, 28, 36, 8),
+            child: Text('Add Channel',
+                style: theme.textTheme.headlineMedium),
+          ),
+          Expanded(
+            child: GridView.builder(
+              padding: const EdgeInsets.fromLTRB(36, 16, 36, 28),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 4,
+                mainAxisSpacing: 20,
+                crossAxisSpacing: 20,
+                childAspectRatio: 1.32,
+              ),
+              itemCount: channels.length,
+              itemBuilder: (context, i) {
+                final c = channels[i];
+                return _PickerTile(
+                  channel: c,
+                  autofocus: i == 0,
+                  onTap: () => Navigator.of(context).pop(c),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A focusable channel tile for the Multiview picker — same look as
+/// TvChannelCard, but tapping pops with the channel instead of
+/// starting playback.
+class _PickerTile extends StatefulWidget {
+  final EPGChannel channel;
+  final bool autofocus;
+  final VoidCallback onTap;
+  const _PickerTile({
+    required this.channel,
+    required this.autofocus,
+    required this.onTap,
+  });
+
+  @override
+  State<_PickerTile> createState() => _PickerTileState();
+}
+
+class _PickerTileState extends State<_PickerTile> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = widget.channel;
+    return Focus(
+      autofocus: widget.autofocus,
+      onFocusChange: (f) => setState(() => _focused = f),
+      child: AnimatedScale(
+        scale: _focused ? 1.06 : 1.0,
+        duration: const Duration(milliseconds: 140),
+        child: Material(
+          color: theme.colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(20),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: widget.onTap,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: _focused
+                      ? theme.colorScheme.primary
+                      : Colors.transparent,
+                  width: 3,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Container(
+                      color: Colors.black54,
+                      alignment: Alignment.center,
+                      child: c.streamIcon != null
+                          ? Image.network(
+                              c.streamIcon!,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) => Text(
+                                  c.name.isEmpty ? '?' : c.name[0],
+                                  style: theme.textTheme.headlineMedium
+                                      ?.copyWith(color: Colors.white38)),
+                            )
+                          : Text(c.name.isEmpty ? '?' : c.name[0],
+                              style: theme.textTheme.headlineMedium
+                                  ?.copyWith(color: Colors.white38)),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 2),
+                    child: Text(c.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                    child: Text(c.nowText(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: Colors.white60)),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
