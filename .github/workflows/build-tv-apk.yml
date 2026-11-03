@@ -36,12 +36,23 @@ jobs:
       - name: Assemble platform scaffolding and Android TV overlay
         run: bash tv/tool/setup_platforms.sh
 
-      - name: Build release APK
+      - name: Build universal release APK
         working-directory: tv
         run: flutter build apk --release
 
-      - name: Upload APK artifact
+      - name: Stash universal APK
+        run: cp tv/build/app/outputs/flutter-apk/app-release.apk /tmp/ViuLiveTV-AndroidTV-universal.apk
+
+      - name: Build per-ABI release APKs
+        working-directory: tv
+        run: flutter build apk --split-per-abi --release
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ViuLiveTV-TV-APK
-          path: tv/build/app/outputs/flutter-apk/app-release.apk
+          name: ViuLiveTV-AndroidTV-APKs
+          path: |
+            /tmp/ViuLiveTV-AndroidTV-universal.apk
+            tv/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            tv/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            tv/build/app/outputs/flutter-apk/app-x86_64-release.apk
