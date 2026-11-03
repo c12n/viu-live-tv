@@ -21,8 +21,10 @@ if n != 1:
 cmake.write_text(text, encoding="utf-8")
 
 text = main_cpp.read_text(encoding="utf-8")
-text, n = re.subn(r'CreateAndShow\(L"[^"]*"',
-                  'CreateAndShow(L"Viu Live TV"', text, count=1)
+# Current templates call window.Create(L"…", …); older ones used
+# CreateAndShow(L"…", …). Replace just the title string either way.
+text, n = re.subn(r'(\bCreate(?:AndShow)?\(L")[^"]*(")',
+                  r"\g<1>Viu Live TV\g<2>", text, count=1)
 if n != 1:
     sys.exit("window title not found in windows/runner/main.cpp")
 main_cpp.write_text(text, encoding="utf-8")
