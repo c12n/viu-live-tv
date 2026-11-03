@@ -5,12 +5,14 @@
 //  The first screen after login: channel list with search, category chips
 //  (the server's live TV categories / tags), pull-to-refresh, and per-row
 //  play / favorite / open-external actions. The All Channels | Favorites
-//  switch lives in the floating bottom tab bar (iPhone) or a compact
-//  segmented control (iPad sidebar).
+//  switch lives in the floating bottom tab bar (iPhone). On iPad the tab
+//  and category selection live in the split view's navigation sidebar
+//  (see ContentView), so this list runs there with its own navigation
+//  controls hidden.
 //
-//  On iPhone this is pushed in a NavigationStack. On iPad it is the sidebar
-//  of a NavigationSplitView (see ContentView), and selecting a channel sets
-//  the detail column.
+//  On iPhone this is pushed in a NavigationStack. On iPad it is the
+//  middle (content) column of a three-column NavigationSplitView, and
+//  selecting a channel sets the detail column to the player.
 //
 
 import SwiftUI
@@ -42,10 +44,16 @@ struct ChannelListView: View {
     /// Channel-guide mode (over the playing video): a row tap picks the
     /// channel instead of navigating.
     var onChannelPicked: ((EPGChannel) -> Void)?
+    /// Hide the built-in segmented tab picker + category chips. On iPad
+    /// the split view's sidebar owns navigation (tab + category), so the
+    /// content column runs with this off.
+    var showsNavigationControls: Bool = true
 
     @State private var search = ""
     /// Selected live TV category (tag parameter_name); nil = All.
-    @State private var selectedCategory: String?
+    /// A binding owned by the caller (MainView, or the player's guide
+    /// sheet) so the iPad sidebar and this list share one selection.
+    @Binding var selectedCategory: String?
 
     // External-player alert state.
     @State private var externalAlert: ExternalAlert?
@@ -207,16 +215,18 @@ struct ChannelListView: View {
 
     private var topInset: some View {
         VStack(spacing: 0) {
-            if isSidebar {
-                Picker("View", selection: $tab) {
-                    ForEach(ChannelTab.allCases) { Text($0.rawValue).tag($0) }
+            if showsNavigationControls {
+                if isSidebar {
+                    Picker("View", selection: $tab) {
+                        ForEach(ChannelTab.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-            }
-            if tab == .all && !displayTags.isEmpty && !epg.usingFallback && !parental.kidsModeEnabled {
-                categoryChips
+                if tab == .all && !displayTags.isEmpty && !epg.usingFallback && !parental.kidsModeEnabled {
+                    categoryChips
+                }
             }
         }
         .background(.bar)

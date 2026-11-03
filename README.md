@@ -41,7 +41,7 @@ Generated with the help of Claude (via claude.ai), then packaged as a standard X
 - **Settings data tools** — Clear Cache shows how much data the app has used before clearing; Clear Favorites removes every favorite on the device and on the website; Restore Defaults resets category visibility and order.
 - **Native Liquid Glass on iOS 26+** — channel cards, toolbars and player chrome use SwiftUI's native `glassEffect`, with a graceful Material fallback on iOS 17–25.
 - **Dynamic Light / Dark Mode** — follows the system by default, with a System / Light / Dark override in Settings.
-- **Portrait + landscape, iPhone + iPad** — iPad gets a two-column split view (channel list sidebar, player detail); iPhone uses a navigation stack.
+- **Portrait + landscape, iPhone + iPad** — iPad gets a proper three-column split view: a navigation sidebar (Channels / Favorites + every category with its channel count), the channel list as its own middle column, and the player in the detail area. iPhone uses a navigation stack.
 - **Diagnostics** — Settings → Channel Loading Diagnostics probes every endpoint live and produces a shareable, token-free report.
 - **Account in Settings** — account info (premium status, expiry, created date) and **Sign Out**, which calls `/api/4/logout/{token}`, clears the Keychain token and the cached guide.
 - **Custom app icon** — a 1024×1024 VIU icon (red block letters with a Liquid Glass effect on black) with dedicated Dark and Tinted appearance variants for iOS 18+/26 home screens. Matching alternate icons in blue, purple, pink, orange, green and teal are bundled and applied automatically when the accent color changes.

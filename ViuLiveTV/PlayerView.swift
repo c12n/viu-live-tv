@@ -526,11 +526,13 @@ struct ChannelGuideSheet: View {
     @Binding var tab: ChannelTab
     var onPick: (EPGChannel) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var guideCategory: String?
 
     var body: some View {
         NavigationStack {
             ChannelListView(selection: .constant(nil), tab: $tab,
-                            onChannelPicked: onPick)
+                            onChannelPicked: onPick,
+                            selectedCategory: $guideCategory)
                 .navigationTitle("Channel Guide")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

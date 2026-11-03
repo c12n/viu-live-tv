@@ -3,8 +3,10 @@
 //  Viu Live TV
 //
 //  Root view. Decides login vs. main UI, and adapts layout:
-//   - iPhone (compact):  NavigationStack, player pushed on top.
-//   - iPad (regular):    NavigationSplitView — sidebar channel list + detail/player.
+//   - iPhone:  NavigationStack, player pushed on top.
+//   - iPad:    three-column NavigationSplitView — a navigation sidebar
+//              (Channels / Favorites + the category list), the channel
+//              list as the middle column, and the player as the detail.
 //
 
 import SwiftUI
@@ -53,6 +55,9 @@ struct MainView: View {
     @State private var selection: EPGChannel?
     @State private var showSettings = false
     @State private var tab: ChannelTab = .all
+    /// Selected category (tag parameter_name); nil = All. Owned here so
+    /// the iPad sidebar and the channel list share one selection.
+    @State private var selectedCategory: String?
     /// iPhone navigation path — the context menu's Play pushes through here.
     @State private var path: [EPGChannel] = []
 
@@ -73,10 +78,23 @@ struct MainView: View {
         }
     }
 
-    // iPad / large: two-column split view.
+    // iPad: three-column split view — navigation sidebar, channel
+    // column, player detail. A proper iPad layout, not the phone list
+    // stretched: the sidebar is a real navigation list (Channels /
+    // Favorites + every category with its channel count), the middle
+    // column is just for browsing channels, and the player gets the
+    // whole detail area.
     private var splitLayout: some View {
         NavigationSplitView {
-            ChannelListView(selection: $selection, tab: $tab, isSidebar: true)
+            IPadSidebarView(tab: $tab, category: $selectedCategory) {
+                showSettings = true
+            }
+            .navigationSplitViewColumnWidth(min: 230, ideal: 275, max: 340)
+        } content: {
+            ChannelListView(selection: $selection, tab: $tab, isSidebar: true,
+                            showsNavigationControls: false,
+                            selectedCategory: $selectedCategory)
+                .navigationSplitViewColumnWidth(min: 330, ideal: 410, max: 540)
                 .toolbar { settingsToolbar }
         } detail: {
             NavigationStack {
@@ -90,6 +108,7 @@ struct MainView: View {
                 }
             }
         }
+        .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showSettings) { SettingsView() }
     }
 
@@ -98,7 +117,8 @@ struct MainView: View {
     private var stackLayout: some View {
         NavigationStack(path: $path) {
             ChannelListView(selection: $selection, tab: $tab,
-                            onPlayRequest: { path.append($0) })
+                            onPlayRequest: { path.append($0) },
+                            selectedCategory: $selectedCategory)
                 .navigationDestination(for: EPGChannel.self) { channel in
                     PlayerView(channel: channel)
                 }
@@ -187,6 +207,134 @@ struct FloatingTabBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+}
+
+// MARK: - iPad sidebar
+
+/// The iPad navigation sidebar: Channels / Favorites, the live TV
+/// categories as a proper list with channel counts, and Settings.
+/// Category filtering mirrors ChannelListView.displayTags (the server's
+/// ALL/FAVORITES tags excluded, hidden categories excluded, Sports Mode
+/// narrows to sports, saved order applied).
+private struct IPadSidebarView: View {
+    @Environment(EPGStore.self) private var epg
+    @Environment(FavoritesStore.self) private var favorites
+    @Environment(AppSettings.self) private var settings
+    @Environment(ParentalControls.self) private var parental
+
+    @Binding var tab: ChannelTab
+    @Binding var category: String?
+    var onSettings: () -> Void
+
+    private var displayTags: [EPGTag] {
+        var base: [EPGTag] = []
+        for tag in epg.tags where tag.parameterName != "ALL" && tag.parameterName != "FAVORITES"
+            && !epg.isCategoryHidden(tag.parameterName)
+            && (!settings.sportsModeEnabled || EPGStore.isSportsCategory(tag.parameterName)) {
+            base.append(tag)
+        }
+        var result: [EPGTag] = []
+        var used = Set<String>()
+        for param in epg.categoryOrder {
+            for tag in base where tag.parameterName == param {
+                result.append(tag)
+                used.insert(param)
+            }
+        }
+        for tag in base where !used.contains(tag.parameterName) {
+            result.append(tag)
+        }
+        return result
+    }
+
+    /// Channels per category, counted in one pass over the store's
+    /// channel→categories map.
+    private var categoryCounts: [String: Int] {
+        var counts: [String: Int] = [:]
+        for params in epg.channelCategories.values {
+            for param in params { counts[param, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    var body: some View {
+        List {
+            Section {
+                navRow(target: .all, icon: "play.tv.fill", title: "Channels")
+                navRow(target: .favorites, icon: "heart.fill", title: "Favorites",
+                       count: favorites.ids.count)
+            }
+            if tab == .all && !parental.kidsModeEnabled && !displayTags.isEmpty {
+                Section("Categories") {
+                    categoryRow(title: "All Categories", param: nil,
+                                count: epg.channels.count)
+                    ForEach(displayTags) { tag in
+                        categoryRow(title: tag.displayName, param: tag.parameterName,
+                                    count: categoryCounts[tag.parameterName] ?? 0)
+                    }
+                }
+            }
+            Section {
+                Button {
+                    onSettings()
+                } label: {
+                    Label("Settings", systemImage: "gearshape.fill")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .listStyle(.sidebar)
+        .navigationTitle("Viu Live TV")
+    }
+
+    private func navRow(target: ChannelTab, icon: String, title: String, count: Int? = nil) -> some View {
+        let isSelected = tab == target
+        return Button {
+            tab = target
+            if target == .favorites { category = nil }
+        } label: {
+            HStack {
+                Label(title, systemImage: icon)
+                Spacer()
+                if let count {
+                    Text("\(count)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fontWeight(isSelected ? .semibold : .regular)
+        .listRowBackground(isSelected ? settings.accent.color.opacity(0.16) : nil)
+        .accessibilityLabel(title)
+    }
+
+    private func categoryRow(title: String, param: String?, count: Int) -> some View {
+        let isSelected = category == param
+        return Button {
+            tab = .all
+            category = param
+        } label: {
+            HStack {
+                Text(title)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(count)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fontWeight(isSelected ? .semibold : .regular)
+        .listRowBackground(isSelected ? settings.accent.color.opacity(0.16) : nil)
+        .accessibilityLabel(title)
     }
 }
 
