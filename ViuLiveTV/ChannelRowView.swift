@@ -104,6 +104,18 @@ struct ChannelRowView: View {
                 Label(isFavorite ? "Remove Favorite" : "Favorite",
                       systemImage: isFavorite ? "heart.slash" : "heart")
             }
+            if let next, let start = next.timeStart, start > Date() {
+                let reminded = settings.hasReminder(streamID: channel.streamId, start: start)
+                Button {
+                    Task {
+                        await settings.setReminder(channel: channel, programme: next,
+                                                   enabled: !reminded)
+                    }
+                } label: {
+                    Label(reminded ? "Cancel Reminder" : "Remind Me: \(next.name)",
+                          systemImage: reminded ? "bell.slash" : "bell")
+                }
+            }
             Button { onOpenExternal() } label: {
                 Label("Open in External Player", systemImage: "arrow.up.forward.app")
             }

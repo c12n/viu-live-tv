@@ -68,6 +68,55 @@ struct ChannelListView: View {
         let message: String
     }
 
+    /// Recently watched channels (from Settings' history), passed
+    /// through the same Kids / language visibility rules as the list.
+    private var recentChannels: [EPGChannel] {
+        var out: [EPGChannel] = []
+        for id in settings.recentChannelIDs {
+            guard let channel = epg.channel(for: id) else { continue }
+            if parental.kidsModeEnabled,
+               epg.channelCategories[id]?.contains("KIDS") != true { continue }
+            if !settings.languageFilter.isEmpty,
+               channel.language.code != settings.languageFilter { continue }
+            out.append(channel)
+        }
+        return out
+    }
+
+    private func recentChip(_ channel: EPGChannel) -> some View {
+        Button {
+            play(channel)
+        } label: {
+            VStack(spacing: 5) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
+                    if let url = channel.logoURL {
+                        AsyncImage(url: url) { phase in
+                            if case .success(let image) = phase {
+                                image.resizable().scaledToFit().padding(5)
+                            } else {
+                                Image(systemName: "tv").foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        Image(systemName: "tv").foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text(channel.name)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(width: 84)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Recent: \(channel.name)")
+    }
+
     private var visibleChannels: [EPGChannel] {
         var result: [EPGChannel]
         // Kids Mode wins over everything: only the Kids category,
@@ -133,6 +182,22 @@ struct ChannelListView: View {
                 }
             }
 
+            if tab == .all && search.isEmpty && !recentChannels.isEmpty {
+                Section {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(recentChannels) { channel in
+                                recentChip(channel)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .listRowInsets(EdgeInsets(top: 2, leading: 14, bottom: 2, trailing: 14))
+                } header: {
+                    Text("Recently Watched")
+                }
+            }
+
             Section {
                 if visibleChannels.isEmpty {
                     ContentUnavailableView(
@@ -181,6 +246,7 @@ struct ChannelListView: View {
             }
         }
         .task {
+            settings.pruneReminders()
             if epg.usingFallback { await epg.refresh() }
             await favorites.reconcileWithServer()
         }

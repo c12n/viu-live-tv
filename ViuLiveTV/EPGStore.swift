@@ -435,10 +435,16 @@ final class EPGStore {
         }
         let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return result }
-        return result.filter {
-            $0.name.lowercased().contains(q) ||
-            $0.nowText().lowercased().contains(q) ||
-            ($0.tags?.lowercased().contains(q) ?? false)
+        return result.filter { ch in
+            if ch.name.lowercased().contains(q) { return true }
+            if ch.nowText().lowercased().contains(q) { return true }
+            if ch.tags?.lowercased().contains(q) == true { return true }
+            // Programme search: a match on anything in the channel's
+            // schedule (a game, a show) finds the channel airing it.
+            for programme in ch.schedule where programme.name.lowercased().contains(q) {
+                return true
+            }
+            return false
         }
     }
 

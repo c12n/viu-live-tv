@@ -111,8 +111,15 @@ final class PlayerModel {
         Task { await loadLink() }
     }
 
+    /// The channel watched before the current one — powers the
+    /// player's "Last Channel" button (a two-channel swap).
+    private(set) var previousChannel: EPGChannel?
+
     /// Switch to a different channel in place (channel guide picks).
     func switchChannel(_ newChannel: EPGChannel) {
+        if newChannel.streamId != channel.streamId {
+            previousChannel = channel
+        }
         channel = newChannel
         displayName = newChannel.name
         autoRetried = false
@@ -120,6 +127,13 @@ final class PlayerModel {
         errorMessage = nil
         streamURL = nil
         Task { await loadLink() }
+    }
+
+    /// Jump back to the previous channel (which then becomes the
+    /// current one, so the button swaps back and forth).
+    func switchToPrevious() {
+        guard let previousChannel else { return }
+        switchChannel(previousChannel)
     }
 }
 
@@ -152,6 +166,7 @@ struct PlayerView: View {
     @State private var chromeVisible = true
     @State private var chromeHideTask: Task<Void, Never>?
     @State private var showGuide = false
+    @State private var showMultiview = false
     @State private var guideTab: ChannelTab = .all
     @State private var cast = CastManager()
     @State private var showCast = false
@@ -168,7 +183,16 @@ struct PlayerView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if cast.isCastingMedia {
+            if showMultiview {
+                MultiviewView(initial: model.channel,
+                              onExpand: { channel in
+                                  if channel.streamId != model.channel.streamId {
+                                      model.switchChannel(channel)
+                                  }
+                                  showMultiview = false
+                              },
+                              onClose: { showMultiview = false })
+            } else if cast.isCastingMedia {
                 castingPanel
             } else if let err = model.playbackError {
                 playbackErrorPanel(err)
@@ -205,6 +229,37 @@ struct PlayerView: View {
                                 }
                                 .glassControl(cornerRadius: 20, tint: .black)
                                 .foregroundStyle(.white)
+
+                                if let previous = model.previousChannel {
+                                    Button {
+                                        Haptics.light()
+                                        model.switchToPrevious()
+                                        showChrome()
+                                    } label: {
+                                        Label("Last: \(previous.name)", systemImage: "arrow.uturn.backward")
+                                            .font(.callout.weight(.semibold))
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 9)
+                                    }
+                                    .glassControl(cornerRadius: 20, tint: .black)
+                                    .foregroundStyle(.white)
+                                    .accessibilityLabel("Back to \(previous.name)")
+                                }
+
+                                if UIDevice.current.userInterfaceIdiom == .pad {
+                                    Button {
+                                        Haptics.light()
+                                        showMultiview = true
+                                    } label: {
+                                        Label("Multiview", systemImage: "square.grid.2x2")
+                                            .font(.callout.weight(.semibold))
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 9)
+                                    }
+                                    .glassControl(cornerRadius: 20, tint: .black)
+                                    .foregroundStyle(.white)
+                                }
 
                                 Button {
                                     Haptics.light()
@@ -283,6 +338,10 @@ struct PlayerView: View {
         }
         .sheet(isPresented: $showCast) {
             castSheet
+        }
+        .onAppear { settings.recordRecent(streamID: model.channel.streamId) }
+        .onChange(of: model.channel.streamId) { _, newID in
+            settings.recordRecent(streamID: newID)
         }
         .onChange(of: cast.isReady) { _, ready in
             if ready { loadCurrentChannelToCast() }
@@ -542,6 +601,218 @@ struct ChannelGuideSheet: View {
                 }
         }
     }
+}
+
+// MARK: - Multiview (iPad)
+
+/// Watch up to four channels at once in a 2×2 grid. The focused cell
+/// is the one with sound; tapping a cell focuses it, its expand button
+/// returns to the full single player with that channel, and empty
+/// cells take a channel from the guide.
+struct MultiviewView: View {
+    @State private var slots: [EPGChannel?]
+    @State private var focus = 0
+    @State private var pickerSlot: Int?
+    @State private var guideTab: ChannelTab = .all
+    let onExpand: (EPGChannel) -> Void
+    let onClose: () -> Void
+
+    init(initial: EPGChannel,
+         onExpand: @escaping (EPGChannel) -> Void,
+         onClose: @escaping () -> Void) {
+        _slots = State(initialValue: [initial, nil, nil, nil])
+        self.onExpand = onExpand
+        self.onClose = onClose
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("Multiview")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                Button("Done", action: onClose)
+                    .font(.callout.weight(.semibold))
+            }
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
+                                GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                ForEach(0..<4, id: \.self) { i in
+                    if let channel = slots[i] {
+                        MultiviewCell(channel: channel, focused: focus == i,
+                                      onFocus: { focus = i },
+                                      onClose: { slots[i] = nil },
+                                      onExpand: { onExpand(channel) })
+                    } else {
+                        Button {
+                            pickerSlot = i
+                        } label: {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.06))
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.white.opacity(0.2),
+                                            style: StrokeStyle(lineWidth: 1, dash: [6, 5]))
+                                VStack(spacing: 6) {
+                                    Image(systemName: "plus").font(.title3)
+                                    Text("Add Channel").font(.caption.weight(.semibold))
+                                }
+                                .foregroundStyle(.white.opacity(0.75))
+                            }
+                            .aspectRatio(16 / 9, contentMode: .fit)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(Color.black)
+        .sheet(isPresented: Binding(get: { pickerSlot != nil },
+                                    set: { if !$0 { pickerSlot = nil } })) {
+            ChannelGuideSheet(tab: $guideTab) { picked in
+                if let slot = pickerSlot {
+                    slots[slot] = picked
+                    focus = slot
+                }
+                pickerSlot = nil
+            }
+        }
+    }
+}
+
+/// One Multiview pane: its own lightweight AVPlayer (no view-controller
+/// chrome), muted unless focused.
+struct MultiviewCell: View {
+    @Environment(AppSettings.self) private var settings
+    let channel: EPGChannel
+    let focused: Bool
+    var onFocus: () -> Void
+    var onClose: () -> Void
+    var onExpand: () -> Void
+
+    @State private var player: AVPlayer?
+    @State private var failed = false
+    @State private var statusObservation: NSKeyValueObservation?
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let player {
+                PlayerLayerView(player: player)
+            } else if failed {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.yellow)
+                    Text("Couldn't load")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.8))
+                    Button("Retry") { Task { await load() } }
+                        .font(.caption.bold())
+                }
+            } else {
+                ProgressView().tint(.white)
+            }
+            VStack {
+                HStack {
+                    Spacer()
+                    if focused {
+                        Button(action: onExpand) {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.caption.weight(.bold))
+                                .padding(7)
+                                .background(.black.opacity(0.55), in: Circle())
+                        }
+                        .accessibilityLabel("Open full screen")
+                    }
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.bold))
+                            .padding(7)
+                            .background(.black.opacity(0.55), in: Circle())
+                    }
+                    .accessibilityLabel("Remove channel")
+                }
+                Spacer()
+                HStack(spacing: 6) {
+                    Circle().fill(Color.red).frame(width: 7, height: 7)
+                    Text(channel.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer()
+                }
+            }
+            .padding(8)
+            .foregroundStyle(.white)
+        }
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(focused ? settings.accent.color : Color.white.opacity(0.15),
+                        lineWidth: focused ? 2.5 : 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { onFocus() }
+        .task(id: channel.streamId) { await load() }
+        .onChange(of: focused) { _, isFocused in player?.isMuted = !isFocused }
+        .onDisappear {
+            statusObservation?.invalidate()
+            player?.pause()
+            player = nil
+        }
+    }
+
+    private func load() async {
+        failed = false
+        statusObservation?.invalidate()
+        player?.pause()
+        player = nil
+        do {
+            let links = try await APIClient.shared.liveLinks(streamID: channel.streamId)
+            guard let link = links.liveLink, let url = URL(string: link) else {
+                failed = true
+                return
+            }
+            let item = AVPlayerItem(url: url)
+            let newPlayer = AVPlayer(playerItem: item)
+            newPlayer.isMuted = !focused
+            statusObservation = item.observe(\.status, options: [.new]) { item, _ in
+                if item.status == .failed {
+                    Task { @MainActor in failed = true }
+                }
+            }
+            player = newPlayer
+            newPlayer.play()
+        } catch {
+            failed = true
+        }
+    }
+}
+
+/// A bare AVPlayerLayer view (no controls) for Multiview panes.
+struct PlayerLayerView: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerLayerUIView {
+        let view = PlayerLayerUIView()
+        view.playerLayer.player = player
+        view.playerLayer.videoGravity = .resizeAspect
+        return view
+    }
+
+    func updateUIView(_ view: PlayerLayerUIView, context: Context) {
+        if view.playerLayer.player !== player {
+            view.playerLayer.player = player
+        }
+    }
+}
+
+final class PlayerLayerUIView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+    var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
 }
 
 // MARK: - AVPlayerViewController bridge

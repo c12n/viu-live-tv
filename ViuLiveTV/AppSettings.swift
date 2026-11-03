@@ -8,6 +8,7 @@
 
 import SwiftUI
 import Observation
+import UserNotifications
 
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case system, light, dark
@@ -125,6 +126,15 @@ final class AppSettings {
     var languageFilter: String {
         didSet { UserDefaults.standard.set(languageFilter, forKey: Keys.languageFilter) }
     }
+    /// Recently watched channel stream IDs, most recent first (max 12).
+    var recentChannelIDs: [Int] {
+        didSet { UserDefaults.standard.set(recentChannelIDs, forKey: Keys.recents) }
+    }
+    /// Pending "Remind Me" notification identifiers
+    /// ("viu-remind-<streamID>-<startEpoch>").
+    private(set) var reminderIDs: Set<String> {
+        didSet { UserDefaults.standard.set(Array(reminderIDs), forKey: Keys.reminders) }
+    }
 
     private enum Keys {
         static let appearance = "viu_appearance_mode"
@@ -136,6 +146,8 @@ final class AppSettings {
         static let accent = "viu_accent_choice"
         static let sportsMode = "viu_sports_mode"
         static let languageFilter = "viu_language_filter"
+        static let recents = "viu_recent_channels"
+        static let reminders = "viu_programme_reminders"
     }
 
     init() {
@@ -149,6 +161,69 @@ final class AppSettings {
         accent                  = AccentChoice(rawValue: d.string(forKey: Keys.accent) ?? "") ?? .red
         sportsModeEnabled       = d.bool(forKey: Keys.sportsMode)
         languageFilter          = d.string(forKey: Keys.languageFilter) ?? ""
+        recentChannelIDs        = d.array(forKey: Keys.recents) as? [Int] ?? []
+        reminderIDs             = Set(d.array(forKey: Keys.reminders) as? [String] ?? [])
+    }
+
+    // MARK: Recently watched
+
+    func recordRecent(streamID: Int) {
+        var ids = recentChannelIDs
+        ids.removeAll { $0 == streamID }
+        ids.insert(streamID, at: 0)
+        recentChannelIDs = Array(ids.prefix(12))
+    }
+
+    // MARK: Programme reminders ("Remind Me")
+
+    static func reminderID(streamID: Int, start: Date) -> String {
+        "viu-remind-\(streamID)-\(Int(start.timeIntervalSince1970))"
+    }
+
+    func hasReminder(streamID: Int, start: Date?) -> Bool {
+        guard let start else { return false }
+        return reminderIDs.contains(Self.reminderID(streamID: streamID, start: start))
+    }
+
+    /// Schedule (or cancel) a local notification for when a programme
+    /// starts. Returns the reminder's new state; scheduling asks for
+    /// notification permission the first time.
+    @discardableResult
+    func setReminder(channel: EPGChannel, programme: EPGProgramme, enabled: Bool) async -> Bool {
+        guard let start = programme.timeStart else { return false }
+        let id = Self.reminderID(streamID: channel.streamId, start: start)
+        let center = UNUserNotificationCenter.current()
+        if enabled {
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+            guard granted, start > Date() else { return false }
+            let content = UNMutableNotificationContent()
+            content.title = programme.name
+            content.body = "Starting now on \(channel.name)"
+            content.sound = .default
+            let trigger = UNTimeIntervalNotificationTrigger(
+                timeInterval: max(1, start.timeIntervalSinceNow), repeats: false)
+            do {
+                try await center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
+            } catch {
+                return false
+            }
+            reminderIDs.insert(id)
+            return true
+        } else {
+            center.removePendingNotificationRequests(withIdentifiers: [id])
+            reminderIDs.remove(id)
+            return false
+        }
+    }
+
+    /// Drop reminder records whose start time has passed (the
+    /// notifications themselves fire or expire on their own).
+    func pruneReminders() {
+        let now = Date().timeIntervalSince1970
+        reminderIDs = reminderIDs.filter { id in
+            guard let epoch = id.split(separator: "-").last, let t = Double(epoch) else { return false }
+            return t > now - 3600
+        }
     }
 }
 
