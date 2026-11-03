@@ -12,6 +12,9 @@
   flutter_local_notifications resolve androidx.core 1.17, whose AAR
   metadata demands compileSdk 36; the generated scaffold pins 35 and
   Gradle fails checkReleaseAarMetadata.
+- core library desugaring enabled in the same file (plus the
+  desugar_jdk_libs dependency): flutter_local_notifications' AAR
+  metadata requires it, the same Gradle check fails without it.
 
 Usage: patch_android.py <path-to-generated-android-dir>
 """
@@ -60,8 +63,24 @@ def main() -> None:
         )
         if n != 1:
             raise SystemExit(f"could not patch compileSdk in {name}")
+        is_kts = name.endswith(".kts")
+        if "coreLibraryDesugaring" not in gtext:
+            flag = ("isCoreLibraryDesugaringEnabled = true" if is_kts
+                    else "coreLibraryDesugaringEnabled true")
+            gtext, n = re.subn(
+                r"(compileOptions\s*\{)",
+                r"\1\n        " + flag,
+                gtext,
+                count=1,
+            )
+            if n != 1:
+                raise SystemExit(f"could not enable desugaring in {name}")
+            dep = ('coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
+                   if is_kts else
+                   "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'")
+            gtext += f"\ndependencies {{\n    {dep}\n}}\n"
         gradle_path.write_text(gtext)
-        print(f"patched compileSdk -> 36 in {name}")
+        print(f"patched compileSdk -> 36 + desugaring in {name}")
         break
     else:
         raise SystemExit("no app build.gradle(.kts) found to patch")
