@@ -31,6 +31,7 @@ def main() -> None:
             r"\1"
             '\n    <uses-permission android:name="android.permission.INTERNET" />'
             '\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />'
+            '\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
             '\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />',
             text,
             count=1,

@@ -1,7 +1,7 @@
 name: viulivetv_mobile
 description: "Viu Live TV for Android phones and tablets — touch-first live-TV client for Viu (api.viu.rs) subscribers: big readable channel guide with per-language badges and filter, Material 3 Expressive design with an adaptive tablet layout, light/dark, favorites sync, parental controls, Kids/Sports modes and hand-rolled Chromecast (CASTV2). Unofficial, personal-use client."
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.5.0+3
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -19,6 +19,8 @@ dependencies:
   media_kit_libs_windows_video: ^1.0.11
   url_launcher: ^6.3.1
   nsd: ^4.0.3
+  flutter_local_notifications: ^17.2.4
+  timezone: ^0.9.4
 
 dev_dependencies:
   flutter_test:
