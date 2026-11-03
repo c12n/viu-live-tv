@@ -9,7 +9,11 @@
 //
 
 import SwiftUI
+#if os(macOS)
+import AppKit
+#else
 import UIKit
+#endif
 
 // MARK: - Haptics
 
@@ -48,7 +52,7 @@ struct GlassCardBackground: ViewModifier {
     var cornerRadius: CGFloat = 16
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, tvOS 26.0, *) {
+        if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
             content
                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         } else {
@@ -64,7 +68,7 @@ struct GlassControlBackground: ViewModifier {
     var tint: Color?
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, tvOS 26.0, *) {
+        if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
             let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             if let tint {
                 content.glassEffect(.regular.tint(tint).interactive(), in: shape)
@@ -106,7 +110,7 @@ struct GlassGroup<Content: View>: View {
     }
 
     var body: some View {
-        if #available(iOS 26.0, tvOS 26.0, *) {
+        if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
             GlassEffectContainer(spacing: spacing) { content() }
         } else {
             content()
