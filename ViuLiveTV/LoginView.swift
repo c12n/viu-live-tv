@@ -61,7 +61,7 @@ struct LoginView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            .navigationBarTitleDisplayMode(.inline)
+            .viuInlineNavTitle()
         }
     }
 
@@ -93,7 +93,7 @@ struct LoginView: View {
                 .onSubmit { focusedField = .password }
         }
         .padding(12)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.viuFieldBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var passwordField: some View {
@@ -123,7 +123,7 @@ struct LoginView: View {
             .accessibilityLabel(showPassword ? "Hide password" : "Show password")
         }
         .padding(12)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.viuFieldBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var signInButton: some View {
@@ -151,7 +151,7 @@ struct LoginView: View {
                     .focused($focusedField, equals: .token)
             }
             .padding(12)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(Color.viuFieldBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Button {
                 Task { await auth.useToken(token) }
@@ -285,5 +285,31 @@ struct SubscriptionRequiredView: View {
             .frame(maxWidth: 480)
             .frame(maxWidth: .infinity)
         }
+    }
+}
+
+
+// MARK: - Cross-platform availability shims (tvOS / macOS)
+
+extension Color {
+    /// `secondarySystemBackground` doesn't exist on tvOS / macOS.
+    static var viuFieldBackground: Color {
+        #if os(iOS)
+        return Color(.secondarySystemBackground)
+        #else
+        return Color.primary.opacity(0.06)
+        #endif
+    }
+}
+
+extension View {
+    /// `navigationBarTitleDisplayMode` exists only on iOS.
+    @ViewBuilder
+    func viuInlineNavTitle() -> some View {
+        #if os(iOS)
+        self.navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
     }
 }

@@ -204,6 +204,11 @@ final class AppSettings {
     /// notification permission the first time.
     @discardableResult
     func setReminder(channel: EPGChannel, programme: EPGProgramme, enabled: Bool) async -> Bool {
+        #if os(tvOS)
+        // Remind Me is not offered on Apple TV (and tvOS marks the
+        // notification content properties unavailable).
+        return false
+        #else
         guard let start = programme.timeStart else { return false }
         let id = Self.reminderID(streamID: channel.streamId, start: start)
         let center = UNUserNotificationCenter.current()
@@ -228,6 +233,7 @@ final class AppSettings {
             reminderIDs.remove(id)
             return false
         }
+        #endif
     }
 
     /// Drop reminder records whose start time has passed (the
