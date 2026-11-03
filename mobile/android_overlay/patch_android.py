@@ -7,6 +7,11 @@
   "Failed host lookup", errno 7; this bit the TV edition's v1.0.0)
 - uses-permission: CHANGE_WIFI_MULTICAST_STATE (required by the nsd
   plugin for Chromecast discovery)
+- uses-permission: POST_NOTIFICATIONS (Remind Me reminders)
+- compileSdk -> 36 in app/build.gradle(.kts): dependencies pulled in by
+  flutter_local_notifications resolve androidx.core 1.17, whose AAR
+  metadata demands compileSdk 36; the generated scaffold pins 35 and
+  Gradle fails checkReleaseAarMetadata.
 
 Usage: patch_android.py <path-to-generated-android-dir>
 """
@@ -41,6 +46,25 @@ def main() -> None:
 
     manifest_path.write_text(text)
     print("patched AndroidManifest.xml for Android mobile")
+
+    for name in ("app/build.gradle.kts", "app/build.gradle"):
+        gradle_path = android / name
+        if not gradle_path.exists():
+            continue
+        gtext = gradle_path.read_text()
+        gtext, n = re.subn(
+            r"compileSdk\s*=\s*(?:flutter\.compileSdkVersion|\d+)",
+            "compileSdk = 36",
+            gtext,
+            count=1,
+        )
+        if n != 1:
+            raise SystemExit(f"could not patch compileSdk in {name}")
+        gradle_path.write_text(gtext)
+        print(f"patched compileSdk -> 36 in {name}")
+        break
+    else:
+        raise SystemExit("no app build.gradle(.kts) found to patch")
 
 
 if __name__ == "__main__":
