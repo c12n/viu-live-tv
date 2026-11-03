@@ -85,7 +85,7 @@ struct LoginView: View {
         HStack {
             Image(systemName: "person.fill").foregroundStyle(.secondary).frame(width: 22)
             TextField("Username", text: $username)
-                .textInputAutocapitalization(.never)
+                .viuNoAutocapitalization()
                 .autocorrectionDisabled()
                 .textContentType(.username)
                 .submitLabel(.next)
@@ -106,7 +106,7 @@ struct LoginView: View {
                     SecureField("Password", text: $password)
                 }
             }
-            .textInputAutocapitalization(.never)
+            .viuNoAutocapitalization()
             .autocorrectionDisabled()
             .textContentType(.password)
             .submitLabel(.go)
@@ -146,7 +146,7 @@ struct LoginView: View {
             HStack {
                 Image(systemName: "key.fill").foregroundStyle(.secondary).frame(width: 22)
                 TextField("Paste auth token", text: $token)
-                    .textInputAutocapitalization(.never)
+                    .viuNoAutocapitalization()
                     .autocorrectionDisabled()
                     .focused($focusedField, equals: .token)
             }
@@ -303,6 +303,16 @@ extension Color {
 }
 
 extension View {
+    /// `textInputAutocapitalization` doesn't exist on macOS.
+    @ViewBuilder
+    func viuNoAutocapitalization() -> some View {
+        #if os(macOS)
+        self
+        #else
+        self.textInputAutocapitalization(.never)
+        #endif
+    }
+
     /// `navigationBarTitleDisplayMode` exists only on iOS.
     @ViewBuilder
     func viuInlineNavTitle() -> some View {
