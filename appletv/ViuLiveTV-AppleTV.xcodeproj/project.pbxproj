@@ -1,0 +1,280 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		E00000000000000000000001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000001 /* Models.swift */; };
+		E00000000000000000000002 /* EPGDateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000002 /* EPGDateParser.swift */; };
+		E00000000000000000000003 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000003 /* APIClient.swift */; };
+		E00000000000000000000004 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000004 /* Keychain.swift */; };
+		E00000000000000000000005 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000005 /* AuthViewModel.swift */; };
+		E00000000000000000000006 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000006 /* LoginView.swift */; };
+		E00000000000000000000007 /* GlassHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000007 /* GlassHelpers.swift */; };
+		E00000000000000000000008 /* FavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000008 /* FavoritesStore.swift */; };
+		E00000000000000000000009 /* EPGStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000009 /* EPGStore.swift */; };
+		E00000000000000000000010 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000010 /* AppSettings.swift */; };
+		E10000000000000000000001 /* ViuAppleTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* ViuAppleTVApp.swift */; };
+		E10000000000000000000002 /* TVHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000002 /* TVHomeView.swift */; };
+		E10000000000000000000003 /* TVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000003 /* TVPlayerView.swift */; };
+		E10000000000000000000004 /* TVSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000004 /* TVSettingsView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		D00000000000000000000001 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		D00000000000000000000002 /* EPGDateParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPGDateParser.swift; sourceTree = "<group>"; };
+		D00000000000000000000003 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		D00000000000000000000004 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		D00000000000000000000005 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		D00000000000000000000006 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		D00000000000000000000007 /* GlassHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassHelpers.swift; sourceTree = "<group>"; };
+		D00000000000000000000008 /* FavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoritesStore.swift; sourceTree = "<group>"; };
+		D00000000000000000000009 /* EPGStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPGStore.swift; sourceTree = "<group>"; };
+		D00000000000000000000010 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		D10000000000000000000001 /* ViuAppleTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViuAppleTVApp.swift; sourceTree = "<group>"; };
+		D10000000000000000000002 /* TVHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVHomeView.swift; sourceTree = "<group>"; };
+		D10000000000000000000003 /* TVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVPlayerView.swift; sourceTree = "<group>"; };
+		D10000000000000000000004 /* TVSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVSettingsView.swift; sourceTree = "<group>"; };
+		D10000000000000000000091 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		555555555555555555555555 /* ViuLiveTV-AppleTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "ViuLiveTV-AppleTV.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BBBBBBBBBBBBBBBBBBBBBBBB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		222222222222222222222222 = {
+			isa = PBXGroup;
+			children = (
+				333333333333333333333333 /* Shared (iOS) */,
+				343434343434343434343434 /* ViuLiveTV-AppleTV */,
+				444444444444444444444444 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		333333333333333333333333 /* Shared (iOS) */ = {
+			isa = PBXGroup;
+			children = (
+				D00000000000000000000001 /* Models.swift */,
+				D00000000000000000000002 /* EPGDateParser.swift */,
+				D00000000000000000000003 /* APIClient.swift */,
+				D00000000000000000000004 /* Keychain.swift */,
+				D00000000000000000000005 /* AuthViewModel.swift */,
+				D00000000000000000000006 /* LoginView.swift */,
+				D00000000000000000000007 /* GlassHelpers.swift */,
+				D00000000000000000000008 /* FavoritesStore.swift */,
+				D00000000000000000000009 /* EPGStore.swift */,
+				D00000000000000000000010 /* AppSettings.swift */,
+			);
+			path = ../ViuLiveTV;
+			sourceTree = "<group>";
+		};
+		343434343434343434343434 /* ViuLiveTV-AppleTV */ = {
+			isa = PBXGroup;
+			children = (
+				D10000000000000000000001 /* ViuAppleTVApp.swift */,
+				D10000000000000000000002 /* TVHomeView.swift */,
+				D10000000000000000000003 /* TVPlayerView.swift */,
+				D10000000000000000000004 /* TVSettingsView.swift */,
+				D10000000000000000000091 /* Info.plist */,
+			);
+			name = "ViuLiveTV-AppleTV";
+			sourceTree = "<group>";
+		};
+		444444444444444444444444 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				555555555555555555555555 /* ViuLiveTV-AppleTV.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		666666666666666666666666 /* ViuLiveTV-AppleTV */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 888888888888888888888888 /* Build configuration list for PBXNativeTarget "ViuLiveTV-AppleTV" */;
+			buildPhases = (
+				AAAAAAAAAAAAAAAAAAAAAAAA /* Sources */,
+				BBBBBBBBBBBBBBBBBBBBBBBB /* Frameworks */,
+				CCCCCCCCCCCCCCCCCCCCCCCC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "ViuLiveTV-AppleTV";
+			productName = "ViuLiveTV-AppleTV";
+			productReference = 555555555555555555555555 /* ViuLiveTV-AppleTV.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		111111111111111111111111 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					666666666666666666666666 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 777777777777777777777777 /* Build configuration list for PBXProject "ViuLiveTV-AppleTV" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 222222222222222222222222;
+			productRefGroup = 444444444444444444444444 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				666666666666666666666666 /* ViuLiveTV-AppleTV */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		CCCCCCCCCCCCCCCCCCCCCCCC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AAAAAAAAAAAAAAAAAAAAAAAA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E00000000000000000000001 /* Models.swift in Sources */,
+				E00000000000000000000002 /* EPGDateParser.swift in Sources */,
+				E00000000000000000000003 /* APIClient.swift in Sources */,
+				E00000000000000000000004 /* Keychain.swift in Sources */,
+				E00000000000000000000005 /* AuthViewModel.swift in Sources */,
+				E00000000000000000000006 /* LoginView.swift in Sources */,
+				E00000000000000000000007 /* GlassHelpers.swift in Sources */,
+				E00000000000000000000008 /* FavoritesStore.swift in Sources */,
+				E00000000000000000000009 /* EPGStore.swift in Sources */,
+				E00000000000000000000010 /* AppSettings.swift in Sources */,
+				E10000000000000000000001 /* ViuAppleTVApp.swift in Sources */,
+				E10000000000000000000002 /* TVHomeView.swift in Sources */,
+				E10000000000000000000003 /* TVPlayerView.swift in Sources */,
+				E10000000000000000000004 /* TVSettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		999999999999999999999991 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		999999999999999999999992 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		999999999999999999999993 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = QD29U585ZA;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.c12n.viulivetv.appletv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+			};
+			name = Debug;
+		};
+		999999999999999999999994 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = QD29U585ZA;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.c12n.viulivetv.appletv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		777777777777777777777777 /* Build configuration list for PBXProject "ViuLiveTV-AppleTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				999999999999999999999991 /* Debug */,
+				999999999999999999999992 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		888888888888888888888888 /* Build configuration list for PBXNativeTarget "ViuLiveTV-AppleTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				999999999999999999999993 /* Debug */,
+				999999999999999999999994 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 111111111111111111111111 /* Project object */;
+}
