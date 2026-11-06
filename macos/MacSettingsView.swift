@@ -13,8 +13,11 @@ struct MacSettingsView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(EPGStore.self) private var epg
     @Environment(AppSettings.self) private var settings
+    @Environment(FavoritesStore.self) private var favorites
     @Environment(ParentalControls.self) private var parental
     @Environment(\.dismiss) private var dismiss
+    @State private var newProfileName = ""
+    @State private var newGroupName = ""
 
     private enum PINFlow: Identifiable {
         case disableParental, setupForParental, disableKids
@@ -51,6 +54,78 @@ struct MacSettingsView: View {
                         Text(accent.label).tag(accent)
                     }
                 }
+                Toggle("Extra-Large Text & Rows", isOn: extraLargeBinding)
+            }
+
+            Section("Profiles") {
+                ForEach(settings.profiles) { profile in
+                    HStack {
+                        Image(systemName: profile.symbol)
+                        Text(profile.name)
+                        if profile.id == settings.profiles.first?.id {
+                            Text("Main").foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if profile.id == settings.activeProfileID {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Button("Use") {
+                                settings.switchProfile(to: profile.id)
+                                favorites.switchProfile(to: profile.id)
+                            }
+                        }
+                        if profile.id != settings.profiles.first?.id {
+                            Button("Delete", role: .destructive) {
+                                let wasActive = profile.id == settings.activeProfileID
+                                settings.deleteProfile(profile.id)
+                                if wasActive {
+                                    favorites.switchProfile(to: settings.activeProfileID)
+                                }
+                            }
+                        }
+                    }
+                }
+                HStack {
+                    TextField("New profile name", text: $newProfileName)
+                    Button("Add") {
+                        let name = newProfileName.trimmingCharacters(in: .whitespaces)
+                        if !name.isEmpty {
+                            settings.addProfile(name: name)
+                            newProfileName = ""
+                        }
+                    }
+                }
+                Text("Each profile keeps its own favorites, recents and groups. Only the Main profile syncs favorites with your Viu account.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("My Groups") {
+                ForEach(settings.activeGroups) { group in
+                    HStack {
+                        Text(group.name)
+                        Spacer()
+                        Text("\(group.channelIDs.count)")
+                            .foregroundStyle(.secondary)
+                        Button("Delete", role: .destructive) {
+                            settings.deleteGroup(group.id)
+                        }
+                    }
+                }
+                HStack {
+                    TextField("New group name", text: $newGroupName)
+                    Button("Add") {
+                        let name = newGroupName.trimmingCharacters(in: .whitespaces)
+                        if !name.isEmpty {
+                            settings.addGroup(name: name)
+                            newGroupName = ""
+                        }
+                    }
+                }
+                Text("Add channels from a channel card's right-click menu → Groups.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Language") {
@@ -65,6 +140,24 @@ struct MacSettingsView: View {
             Section("Modes") {
                 Toggle("Sports Mode", isOn: sportsBinding)
                 Toggle("Kids Mode", isOn: kidsBinding)
+                if parental.kidsModeEnabled {
+                    Toggle("Kids Bedtime", isOn: bedtimeBinding)
+                    if parental.kidsBedtimeEnabled {
+                        DatePicker("Bedtime", selection: bedtimeTimeBinding,
+                                   displayedComponents: .hourAndMinute)
+                    }
+                }
+            }
+
+            Section("Keyboard Shortcuts") {
+                LabeledContent("Favorite channel", value: "F")
+                LabeledContent("Last channel", value: "L")
+                LabeledContent("Multiview", value: "M")
+                LabeledContent("Channel guide", value: "G")
+                LabeledContent("Previous / Next channel", value: "↑ / ↓")
+                Text("Shortcuts work while the player is on screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Parental Controls") {
@@ -102,7 +195,7 @@ struct MacSettingsView: View {
                 Button("Clear Guide Cache") {
                     Task { await epg.clearGuideCache() }
                 }
-                LabeledContent("Version", value: "1.5.0")
+                LabeledContent("Version", value: "2.0.0")
                 Text("Viu Live TV for macOS · Copyright (c) 2026 c12n Apps")
                     .foregroundStyle(.secondary)
             }
@@ -137,6 +230,30 @@ struct MacSettingsView: View {
     private var languageBinding: Binding<String> {
         Binding(get: { settings.languageFilter },
                 set: { settings.languageFilter = $0 })
+    }
+
+    private var extraLargeBinding: Binding<Bool> {
+        Binding(get: { settings.extraLargeMode },
+                set: { settings.extraLargeMode = $0 })
+    }
+
+    private var bedtimeBinding: Binding<Bool> {
+        Binding(get: { parental.kidsBedtimeEnabled },
+                set: { parental.kidsBedtimeEnabled = $0 })
+    }
+
+    private var bedtimeTimeBinding: Binding<Date> {
+        Binding(
+            get: {
+                Calendar.current.date(bySettingHour: parental.kidsBedtimeMinutes / 60,
+                                      minute: parental.kidsBedtimeMinutes % 60,
+                                      second: 0, of: Date()) ?? Date()
+            },
+            set: { newDate in
+                let cal = Calendar.current
+                parental.kidsBedtimeMinutes = cal.component(.hour, from: newDate) * 60
+                    + cal.component(.minute, from: newDate)
+            })
     }
 
     private var sportsBinding: Binding<Bool> {

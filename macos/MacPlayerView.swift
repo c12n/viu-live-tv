@@ -26,6 +26,12 @@ struct MacPlayerView: View {
     @State private var showGuide = false
     @State private var showMultiview = false
     @State private var pinFor: EPGChannel?
+    /// 2.0.0 player extras.
+    @State private var audioOnly = false
+    @State private var showTracks = false
+    @State private var sleepTimer = SleepTimer.shared
+    @State private var failureCount = 0
+    @State private var reconnectAttempt = 0
 
     init(channel: EPGChannel, contextList: [EPGChannel]) {
         self.contextList = contextList
@@ -37,6 +43,30 @@ struct MacPlayerView: View {
             ZStack {
                 Color.black
                 MacAVPlayerView(player: player)
+                if audioOnly {
+                    ZStack {
+                        Color.black
+                        VStack(spacing: 10) {
+                            Image(systemName: "headphones")
+                                .font(.system(size: 44))
+                                .foregroundStyle(.white.opacity(0.7))
+                            Text(channel.name)
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text(nowNextLine)
+                                .font(.callout)
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
+                }
+                if reconnectAttempt > 0 {
+                    VStack(spacing: 8) {
+                        ProgressView().controlSize(.large)
+                        Text("Reconnecting… attempt \(reconnectAttempt) of 3")
+                            .foregroundStyle(.white)
+                            .font(.callout.weight(.semibold))
+                    }
+                }
                 if loading {
                     ProgressView().controlSize(.large)
                 }
@@ -70,12 +100,14 @@ struct MacPlayerView: View {
                         Label("Last: \(previous.name)",
                               systemImage: "arrow.uturn.backward")
                     }
+                    .keyboardShortcut("l", modifiers: [])
                 }
                 Button {
                     showGuide = true
                 } label: {
                     Label("Guide", systemImage: "list.bullet")
                 }
+                .keyboardShortcut("g", modifiers: [])
                 .popover(isPresented: $showGuide, arrowEdge: .bottom) {
                     guideList
                 }
@@ -84,12 +116,39 @@ struct MacPlayerView: View {
                 } label: {
                     Label("Multiview", systemImage: "square.grid.2x2")
                 }
+                .keyboardShortcut("m", modifiers: [])
                 Button {
                     favorites.toggle(channel)
                 } label: {
                     Label(favorites.isFavorite(channel.streamId) ? "Favorited" : "Favorite",
                           systemImage: favorites.isFavorite(channel.streamId)
                             ? "heart.fill" : "heart")
+                }
+                .keyboardShortcut("f", modifiers: [])
+
+                Menu {
+                    Section("Sleep Timer") {
+                        Button("Off") { sleepTimer.cancel() }
+                        ForEach([15, 30, 60, 90], id: \.self) { minutes in
+                            Button("\(minutes) minutes") { sleepTimer.start(minutes: minutes) }
+                        }
+                    }
+                    Button("Audio & Subtitles…") { showTracks = true }
+                    Button(audioOnly ? "Show Video" : "Audio Only") { audioOnly.toggle() }
+                    Section("Stream Health") {
+                        Text(healthText)
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Circle().fill(healthColor).frame(width: 9, height: 9)
+                        Image(systemName: "ellipsis.circle")
+                        if sleepTimer.isActive {
+                            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                                Text(sleepTimer.remainingText ?? "")
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -101,11 +160,13 @@ struct MacPlayerView: View {
                 } label: {
                     Label("Previous Channel", systemImage: "chevron.up")
                 }
+                .keyboardShortcut(.upArrow, modifiers: [])
                 Button {
                     hop(1)
                 } label: {
                     Label("Next Channel", systemImage: "chevron.down")
                 }
+                .keyboardShortcut(.downArrow, modifiers: [])
                 Spacer()
                 Text(channel.language.label)
                     .font(.callout)
@@ -117,6 +178,18 @@ struct MacPlayerView: View {
         }
         .task(id: channel.streamId) { await load() }
         .onDisappear { player.pause() }
+        .sheet(isPresented: $showTracks) {
+            MacTrackPickerView(player: player)
+                .frame(minWidth: 420, minHeight: 380)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: SleepTimer.firedNotification)) { _ in
+            player.pause()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: AVPlayerItem.failedToPlayToEndTimeNotification)) { note in
+            guard (note.object as? AVPlayerItem) === player.currentItem else { return }
+            handleFailure()
+        }
         .sheet(isPresented: $showMultiview) {
             MacMultiviewView(initial: channel) { picked in
                 if let picked, picked.streamId != channel.streamId {
@@ -191,9 +264,40 @@ struct MacPlayerView: View {
             player.replaceCurrentItem(with: AVPlayerItem(url: url))
             player.play()
             loading = false
+            failureCount = 0
+            reconnectAttempt = 0
         } catch {
             errorText = "Couldn't load this channel. Check your connection and try again."
             loading = false
+        }
+    }
+
+    private var healthText: String {
+        if errorText != nil || failureCount >= 3 { return "Stream health: Poor" }
+        if reconnectAttempt > 0 { return "Stream health: Fair (reconnecting)" }
+        return "Stream health: Good"
+    }
+
+    private var healthColor: Color {
+        if errorText != nil || failureCount >= 3 { return .red }
+        if reconnectAttempt > 0 { return .yellow }
+        return .green
+    }
+
+    /// Auto-reconnect (2.0.0): retry the load up to 3 times with
+    /// growing delays before leaving the error on screen.
+    private func handleFailure() {
+        failureCount += 1
+        guard failureCount <= 3 else {
+            errorText = "This stream stopped and couldn't be reconnected."
+            reconnectAttempt = 0
+            return
+        }
+        reconnectAttempt = failureCount
+        let delay = [2, 5, 10][failureCount - 1]
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+            if reconnectAttempt == failureCount { await load() }
         }
     }
 
@@ -274,4 +378,97 @@ final class MacPlayerLayerNSView: NSView {
     }
 
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+}
+
+
+// MARK: - Audio & subtitles (2.0.0, macOS)
+
+struct MacTrackPickerView: View {
+    let player: AVPlayer
+    @Environment(\.dismiss) private var dismiss
+    @State private var refreshTick = 0
+
+    private func group(for characteristic: AVMediaCharacteristic) -> AVMediaSelectionGroup? {
+        player.currentItem?.asset.mediaSelectionGroup(forMediaCharacteristic: characteristic)
+    }
+    private func selected(for characteristic: AVMediaCharacteristic) -> AVMediaSelectionOption? {
+        guard let item = player.currentItem, let g = group(for: characteristic) else { return nil }
+        return item.currentMediaSelection.selectedMediaOption(in: g)
+    }
+    private func select(_ option: AVMediaSelectionOption?, for characteristic: AVMediaCharacteristic) {
+        guard let item = player.currentItem, let g = group(for: characteristic) else { return }
+        item.select(option, in: g)
+        refreshTick += 1
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Audio & Subtitles")
+                    .font(.title3.weight(.bold))
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+            .padding(12)
+            Divider()
+            List {
+                Section("Audio") {
+                    let options = group(for: .audible)?.options ?? []
+                    if options.isEmpty {
+                        Text("No alternate audio tracks for this stream.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                        Button {
+                            select(option, for: .audible)
+                        } label: {
+                            HStack {
+                                Text(option.displayName)
+                                Spacer()
+                                if selected(for: .audible) == option {
+                                    Image(systemName: "checkmark").foregroundStyle(.green)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Section("Subtitles") {
+                    Button {
+                        select(nil, for: .legible)
+                    } label: {
+                        HStack {
+                            Text("Off")
+                            Spacer()
+                            if selected(for: .legible) == nil {
+                                Image(systemName: "checkmark").foregroundStyle(.green)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    let options = (group(for: .legible)?.options ?? [])
+                        .filter { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) }
+                    ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                        Button {
+                            select(option, for: .legible)
+                        } label: {
+                            HStack {
+                                Text(option.displayName)
+                                Spacer()
+                                if selected(for: .legible) == option {
+                                    Image(systemName: "checkmark").foregroundStyle(.green)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if options.isEmpty {
+                        Text("No subtitle tracks for this stream.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .id(refreshTick)
+        }
+    }
 }

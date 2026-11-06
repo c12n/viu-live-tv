@@ -51,11 +51,51 @@ struct ViuMacApp: App {
     }
 }
 
+/// Extra-large mode (2.0.0) for macOS.
+struct MacExtraLargeModifier: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        content.environment(\.dynamicTypeSize, enabled ? .accessibility3 : .large)
+    }
+}
+
+/// Kids bedtime lock (2.0.0) for macOS.
+struct MacBedtimeView: View {
+    @Environment(ParentalControls.self) private var parental
+    @State private var showPIN = false
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "moon.stars.fill")
+                .font(.system(size: 54))
+                .foregroundStyle(.indigo)
+            Text("Bedtime")
+                .font(.largeTitle.weight(.bold))
+            Text("Kids Mode is asleep for the night. It will be back in the morning.")
+                .foregroundStyle(.secondary)
+            Button("Exit Kids Mode with PIN") { showPIN = true }
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showPIN) {
+            MacPINEntryView(title: "Enter PIN to exit Kids Mode") { pin in
+                showPIN = false
+                if let pin, parental.verify(pin) {
+                    parental.kidsModeEnabled = false
+                }
+            }
+            .frame(width: 340)
+        }
+    }
+}
+
 /// Root gate — mirrors the iOS ContentView: boot → login →
 /// subscription check → home.
 struct MacRootView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(AppSettings.self) private var settings
+    @Environment(FavoritesStore.self) private var favoritesStore
+    @Environment(ParentalControls.self) private var parentalControls
 
     var body: some View {
         Group {
@@ -67,7 +107,11 @@ struct MacRootView: View {
             case .signedIn:
                 switch auth.subscriptionState {
                 case .active:
-                    MacHomeView()
+                    if parentalControls.isBedtimeActive() {
+                        MacBedtimeView()
+                    } else {
+                        MacHomeView()
+                    }
                 case .inactive:
                     SubscriptionRequiredView()
                 case .unknown:
@@ -78,8 +122,12 @@ struct MacRootView: View {
         .animation(.default, value: auth.state)
         .preferredColorScheme(settings.appearance.colorScheme)
         .tint(settings.accent.color)
+        .modifier(MacExtraLargeModifier(enabled: settings.extraLargeMode))
         .task {
             if auth.state == .signedIn { await auth.validateSession() }
+        }
+        .onAppear {
+            favoritesStore.switchProfile(to: settings.activeProfileID)
         }
     }
 }
