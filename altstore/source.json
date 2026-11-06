@@ -1,0 +1,53 @@
+{
+  "name": "Viu Live TV",
+  "identifier": "com.c12n.viulivetv.source",
+  "subtitle": "Live TV for Viu members, by c12n Apps",
+  "description": "The official source for Viu Live TV by c12n Apps. One app: live TV for Viu subscribers on iPhone and iPad.",
+  "iconURL": "https://raw.githubusercontent.com/c12n/viu-live-tv/main/ViuLiveTV/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png",
+  "headerImageURL": "https://raw.githubusercontent.com/c12n/viu-live-tv/main/screenshots/ios-home.png",
+  "website": "https://github.com/c12n/viu-live-tv",
+  "tintColor": "E50914",
+  "featuredApps": [
+    "com.c12n.viulivetv"
+  ],
+  "apps": [
+    {
+      "name": "Viu Live TV",
+      "bundleIdentifier": "com.c12n.viulivetv",
+      "developerName": "c12n Apps",
+      "subtitle": "Live TV for Viu members",
+      "localizedDescription": "Live TV for Viu members: native player with AirPlay and Picture in Picture, Chromecast, favorites that sync with your account, a full programme guide, parental controls and a Liquid Glass interface. iPhone and iPad, iOS 17 or later. An active Viu VIP subscription is required.",
+      "iconURL": "https://raw.githubusercontent.com/c12n/viu-live-tv/main/ViuLiveTV/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png",
+      "tintColor": "E50914",
+      "category": "entertainment",
+      "screenshotURLs": [
+        "https://raw.githubusercontent.com/c12n/viu-live-tv/main/screenshots/ios-home.png",
+        "https://raw.githubusercontent.com/c12n/viu-live-tv/main/screenshots/playback.png",
+        "https://raw.githubusercontent.com/c12n/viu-live-tv/main/screenshots/windows.png"
+      ],
+      "versions": [
+        {
+          "version": "1.5.0",
+          "date": "2026-11-03",
+          "localizedDescription": "Recently Watched, Last Channel, programme search, Remind Me and Multiview on iPad.",
+          "downloadURL": "https://github.com/c12n/viu-live-tv/releases/download/v1.5.0/ViuLiveTV-iOS-v1.5.0.ipa",
+          "size": 3385332,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "version": "1.5.0",
+      "versionDate": "2026-11-03",
+      "versionDescription": "Recently Watched, Last Channel, programme search, Remind Me and Multiview on iPad.",
+      "downloadURL": "https://github.com/c12n/viu-live-tv/releases/download/v1.5.0/ViuLiveTV-iOS-v1.5.0.ipa",
+      "size": 3385332,
+      "minOSVersion": "17.0",
+      "beta": false,
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      }
+    }
+  ],
+  "news": [],
+  "sourceURL": "https://raw.githubusercontent.com/c12n/viu-live-tv/main/altstore/source.json"
+}
