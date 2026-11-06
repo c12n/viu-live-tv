@@ -93,6 +93,29 @@ final class FavoritesStore {
         save()
     }
 
+    /// Full display order (2.0.0): pinned first (in manual order),
+    /// then the manual order, then any remaining favorites.
+    func displayOrderedIDs() -> [Int] {
+        let ordered = order.filter { ids.contains($0) }
+        var result = ordered.filter { pinned.contains($0) }
+        result += ordered.filter { !pinned.contains($0) }
+        result += ids.subtracting(Set(ordered)).sorted()
+        return result
+    }
+
+    func moveUp(_ streamID: Int) { moveBy(streamID, -1) }
+    func moveDown(_ streamID: Int) { moveBy(streamID, +1) }
+
+    private func moveBy(_ streamID: Int, _ delta: Int) {
+        var current = displayOrderedIDs()
+        guard let i = current.firstIndex(of: streamID) else { return }
+        let j = i + delta
+        guard j >= 0, j < current.count else { return }
+        current.swapAt(i, j)
+        order = current
+        save()
+    }
+
     private func orderedStreamIDs() -> [Int] {
         var result = order.filter { ids.contains($0) }
         let missing = ids.subtracting(Set(result)).sorted()

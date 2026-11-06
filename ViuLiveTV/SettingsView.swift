@@ -41,6 +41,10 @@ struct SettingsView: View {
                         get: { settingsStore.hapticsEnabled },
                         set: { settingsStore.hapticsEnabled = $0 }
                     ))
+                    Toggle("Extra-Large Text & Rows", isOn: Binding(
+                        get: { settingsStore.extraLargeMode },
+                        set: { settingsStore.extraLargeMode = $0 }
+                    ))
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Accent Color")
                         HStack(spacing: 12) {
@@ -77,6 +81,10 @@ struct SettingsView: View {
                 }
 
                 parentalSection
+
+                profilesSection
+
+                groupsSection
 
                 sportsSection
 
@@ -248,6 +256,26 @@ struct SettingsView: View {
                     }
                 }
             ))
+            if parental.kidsModeEnabled {
+                Toggle("Kids Bedtime", isOn: Binding(
+                    get: { parental.kidsBedtimeEnabled },
+                    set: { parental.kidsBedtimeEnabled = $0 }
+                ))
+                if parental.kidsBedtimeEnabled {
+                    DatePicker("Bedtime", selection: Binding(
+                        get: {
+                            Calendar.current.date(bySettingHour: parental.kidsBedtimeMinutes / 60,
+                                                  minute: parental.kidsBedtimeMinutes % 60,
+                                                  second: 0, of: Date()) ?? Date()
+                        },
+                        set: { newDate in
+                            let cal = Calendar.current
+                            parental.kidsBedtimeMinutes = cal.component(.hour, from: newDate) * 60
+                                + cal.component(.minute, from: newDate)
+                        }
+                    ), displayedComponents: .hourAndMinute)
+                }
+            }
         } header: {
             Text("Parental Controls")
         } footer: {
@@ -265,6 +293,97 @@ struct SettingsView: View {
             Text("Sports Mode")
         } footer: {
             Text("Shows only sports categories (Sports, Hockey, ESPN+, TSN+ and similar). No PIN needed. While Kids Mode is on, Kids Mode takes over.")
+        }
+    }
+
+    // MARK: Profiles & groups (2.0.0)
+
+    @State private var newProfileName = ""
+    @State private var newGroupName = ""
+
+    private var profilesSection: some View {
+        Section {
+            ForEach(settingsStore.profiles) { profile in
+                HStack {
+                    Image(systemName: profile.symbol)
+                        .foregroundStyle(settingsStore.accent.color)
+                    Text(profile.name)
+                    if profile.id == settingsStore.profiles.first?.id {
+                        Text("Main")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if profile.id == settingsStore.activeProfileID {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Button("Use") {
+                            settingsStore.switchProfile(to: profile.id)
+                            favorites.switchProfile(to: profile.id)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+                .swipeActions(edge: .trailing) {
+                    if profile.id != settingsStore.profiles.first?.id {
+                        Button("Delete", role: .destructive) {
+                            let wasActive = profile.id == settingsStore.activeProfileID
+                            settingsStore.deleteProfile(profile.id)
+                            if wasActive {
+                                favorites.switchProfile(to: settingsStore.activeProfileID)
+                            }
+                        }
+                    }
+                }
+            }
+            HStack {
+                TextField("New profile name", text: $newProfileName)
+                Button("Add") {
+                    let name = newProfileName.trimmingCharacters(in: .whitespaces)
+                    guard !name.isEmpty else { return }
+                    settingsStore.addProfile(name: name)
+                    newProfileName = ""
+                }
+                .disabled(newProfileName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        } header: {
+            Text("Profiles")
+        } footer: {
+            Text("Each profile keeps its own favorites, recently watched and groups. Only the Main profile's favorites sync with your Viu account; other profiles stay on this device.")
+        }
+    }
+
+    private var groupsSection: some View {
+        Section {
+            ForEach(settingsStore.activeGroups) { group in
+                HStack {
+                    Text(group.name)
+                    Spacer()
+                    Text("\(group.channelIDs.count)")
+                        .foregroundStyle(.secondary)
+                }
+                .swipeActions(edge: .trailing) {
+                    Button("Delete", role: .destructive) {
+                        settingsStore.deleteGroup(group.id)
+                    }
+                }
+            }
+            HStack {
+                TextField("New group name", text: $newGroupName)
+                Button("Add") {
+                    let name = newGroupName.trimmingCharacters(in: .whitespaces)
+                    guard !name.isEmpty else { return }
+                    settingsStore.addGroup(name: name)
+                    newGroupName = ""
+                }
+                .disabled(newGroupName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        } header: {
+            Text("My Groups")
+        } footer: {
+            Text("Build your own channel lists (News, Match Days, …). Add channels from any channel's long-press menu → Groups. Groups belong to the active profile.")
         }
     }
 

@@ -50,8 +50,55 @@ struct ContentView: View {
 
 // MARK: - Main (post-login) UI
 
+/// Extra-large mode (2.0.0): bumps the whole UI to a large
+/// accessibility text size when enabled in Settings.
+struct ExtraLargeModifier: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        if enabled {
+            content.dynamicTypeSize(.accessibility3)
+        } else {
+            content
+        }
+    }
+}
+
+/// Kids bedtime lock (2.0.0): shown instead of the channel UI while
+/// Kids Mode is past its bedtime. The only way out is the parental
+/// PIN, which exits Kids Mode.
+struct BedtimeLockView: View {
+    @Environment(ParentalControls.self) private var parental
+    @State private var showPIN = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "moon.stars.fill")
+                .font(.system(size: 64))
+                .foregroundStyle(.indigo)
+            Text("Bedtime")
+                .font(.largeTitle.weight(.bold))
+            Text("Kids Mode is asleep for the night. It will be back in the morning.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button("Exit Kids Mode with PIN") { showPIN = true }
+                .buttonStyle(.borderedProminent)
+                .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showPIN) {
+            PINEntryView(mode: .verify) { unlocked in
+                if unlocked { parental.kidsModeEnabled = false }
+            }
+        }
+    }
+}
+
 struct MainView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(FavoritesStore.self) private var favoritesStore
+    @Environment(ParentalControls.self) private var parentalControls
     @State private var selection: EPGChannel?
     @State private var showSettings = false
     @State private var tab: ChannelTab = .all
@@ -71,10 +118,19 @@ struct MainView: View {
     }
 
     var body: some View {
-        if useSplitLayout {
-            splitLayout
-        } else {
-            stackLayout
+        Group {
+            if parentalControls.isBedtimeActive() {
+                BedtimeLockView()
+            } else if useSplitLayout {
+                splitLayout
+            } else {
+                stackLayout
+            }
+        }
+        .modifier(ExtraLargeModifier(enabled: settings.extraLargeMode))
+        .onAppear {
+            // Keep the favorites store on the persisted active profile.
+            favoritesStore.switchProfile(to: settings.activeProfileID)
         }
     }
 

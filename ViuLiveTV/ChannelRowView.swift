@@ -30,6 +30,15 @@ struct ChannelRowView: View {
     var favoriteButtonInteractive: Bool = true
     /// Parental controls: locked channels show a small lock by the name.
     var isLocked: Bool = false
+    /// Pinned favorite (2.0.0): shows a pin marker.
+    var isPinned: Bool = false
+    /// Optional 2.0.0 context-menu extras (nil hides the item).
+    var onTogglePin: (() -> Void)?
+    var onMoveUp: (() -> Void)?
+    var onMoveDown: (() -> Void)?
+    /// Custom groups for the "Add to Group" submenu: (group, isMember).
+    var groupItems: [(group: CustomGroup, isMember: Bool)] = []
+    var onToggleGroup: ((CustomGroup) -> Void)?
 
     // A ticking clock for live progress updates.
     @State private var clock = Date()
@@ -56,6 +65,11 @@ struct ChannelRowView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption)
+                            .foregroundStyle(settings.accent.color)
+                    }
                     if (now?.isLive(at: clock) ?? false) {
                         LiveBadge().scaleEffect(0.85)
                     }
@@ -67,10 +81,18 @@ struct ChannelRowView: View {
                     .lineLimit(1)
 
                 if let progress = now?.progress(at: clock) {
-                    ProgressView(value: progress)
-                        .tint(settings.accent.color)
-                        .frame(height: 4)
-                        .padding(.top, 1)
+                    HStack(spacing: 8) {
+                        ProgressView(value: progress)
+                            .tint(settings.accent.color)
+                            .frame(height: 4)
+                        if let end = now?.timeEnd {
+                            Text("Ends \(end.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .padding(.top, 1)
                 }
 
                 if let next {
@@ -118,6 +140,28 @@ struct ChannelRowView: View {
             }
             Button { onOpenExternal() } label: {
                 Label("Open in External Player", systemImage: "arrow.up.forward.app")
+            }
+            if let onTogglePin {
+                Button { onTogglePin() } label: {
+                    Label(isPinned ? "Unpin" : "Pin to Top",
+                          systemImage: isPinned ? "pin.slash" : "pin")
+                }
+            }
+            if let onMoveUp {
+                Button { onMoveUp() } label: { Label("Move Up", systemImage: "arrow.up") }
+            }
+            if let onMoveDown {
+                Button { onMoveDown() } label: { Label("Move Down", systemImage: "arrow.down") }
+            }
+            if !groupItems.isEmpty, let onToggleGroup {
+                Menu("Groups") {
+                    ForEach(groupItems, id: \.group.id) { item in
+                        Button { onToggleGroup(item.group) } label: {
+                            Label(item.group.name,
+                                  systemImage: item.isMember ? "checkmark.circle.fill" : "circle")
+                        }
+                    }
+                }
             }
         }
     }

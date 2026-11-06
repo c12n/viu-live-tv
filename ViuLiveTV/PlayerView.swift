@@ -36,7 +36,21 @@ final class PlayerModel {
     /// in a fresh item even when the stream URL string is identical.
     private(set) var linkGeneration = 0
     private var autoRetried = false
+    /// Auto-reconnect state (2.0.0): consecutive item failures and the
+    /// current retry attempt (0 = not reconnecting).
+    private(set) var failureCount = 0
+    private(set) var reconnectAttempt = 0
+    private var retryScheduled = false
     var displayName: String
+
+    enum StreamHealth { case good, fair, poor }
+    /// Good = playing clean; Fair = reconnecting after a drop;
+    /// Poor = gave up (error panel) or repeated failures.
+    var health: StreamHealth {
+        if playbackError != nil || failureCount >= 3 { return .poor }
+        if reconnectAttempt > 0 { return .fair }
+        return .good
+    }
 
     private let deviceName: String
 
@@ -67,6 +81,9 @@ final class PlayerModel {
             }
             streamURL = url
             playbackError = nil
+            failureCount = 0
+            reconnectAttempt = 0
+            retryScheduled = false
             linkGeneration += 1
             isLoading = false
             viuPlaybackLog.info("VIU_PLAYBACK link ok stream=\(self.channel.streamId, privacy: .public) host=\(url.host ?? "?", privacy: .public)")
@@ -89,24 +106,37 @@ final class PlayerModel {
         }
     }
 
-    /// The player item failed. Retry once automatically with a freshly
-    /// fetched live link (links can go stale); if it fails again, show the
-    /// player the actual error instead of a silent black screen.
+    /// The player item failed (2.0.0 auto-reconnect): refetch a fresh
+    /// live link and retry up to 3 times with growing delays (2s, 5s,
+    /// 10s) — links go stale and streams drop transiently. Only after
+    /// the third failure does the error panel appear.
     func handlePlaybackFailure(_ message: String) {
         reportError()
-        if !autoRetried {
-            autoRetried = true
-            streamURL = nil   // back to the loading UI while we refetch
-            Task { await loadLink() }
-        } else {
+        guard !retryScheduled else { return }
+        failureCount += 1
+        autoRetried = true
+        guard failureCount <= 3 else {
             isLoading = false
             playbackError = message
+            return
+        }
+        reconnectAttempt = failureCount
+        retryScheduled = true
+        streamURL = nil   // back to the loading UI while we refetch
+        let delay = [2, 5, 10][failureCount - 1]
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+            retryScheduled = false
+            await loadLink()
         }
     }
 
     /// Manual retry from the error panel.
     func retryPlayback() {
         autoRetried = false
+        failureCount = 0
+        reconnectAttempt = 0
+        retryScheduled = false
         playbackError = nil
         Task { await loadLink() }
     }
@@ -123,6 +153,9 @@ final class PlayerModel {
         channel = newChannel
         displayName = newChannel.name
         autoRetried = false
+        failureCount = 0
+        reconnectAttempt = 0
+        retryScheduled = false
         playbackError = nil
         errorMessage = nil
         streamURL = nil
@@ -153,6 +186,106 @@ final class PlayerControl {
         guard let player else { return }
         if isPlaying { player.pause() } else { player.play() }
     }
+
+    // MARK: Audio / subtitle track selection (2.0.0)
+
+    private func group(for characteristic: AVMediaCharacteristic) -> AVMediaSelectionGroup? {
+        player?.currentItem?.asset.mediaSelectionGroup(forMediaCharacteristic: characteristic)
+    }
+
+    var audioOptions: [AVMediaSelectionOption] {
+        group(for: .audible)?.options ?? []
+    }
+
+    var subtitleOptions: [AVMediaSelectionOption] {
+        // Filter out forced-only variants; the user picks real tracks.
+        group(for: .legible)?.options.filter { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) } ?? []
+    }
+
+    func selectedOption(for characteristic: AVMediaCharacteristic) -> AVMediaSelectionOption? {
+        guard let item = player?.currentItem, let g = group(for: characteristic) else { return nil }
+        return item.currentMediaSelection.selectedMediaOption(in: g)
+    }
+
+    func select(_ option: AVMediaSelectionOption?, for characteristic: AVMediaCharacteristic) {
+        guard let item = player?.currentItem, let g = group(for: characteristic) else { return }
+        item.select(option, in: g)
+    }
+}
+
+/// Audio & subtitles picker sheet (2.0.0).
+struct TrackPickerView: View {
+    let control: PlayerControl
+    @Environment(\.dismiss) private var dismiss
+    @State private var refreshTick = 0
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Audio") {
+                    if control.audioOptions.isEmpty {
+                        Text("No alternate audio tracks for this stream.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(Array(control.audioOptions.enumerated()), id: \.offset) { _, option in
+                        Button {
+                            control.select(option, for: .audible)
+                            refreshTick += 1
+                        } label: {
+                            HStack {
+                                Text(option.displayName)
+                                Spacer()
+                                if control.selectedOption(for: .audible) == option {
+                                    Image(systemName: "checkmark").foregroundStyle(.green)
+                                }
+                            }
+                        }
+                    }
+                }
+                Section("Subtitles") {
+                    Button {
+                        control.select(nil, for: .legible)
+                        refreshTick += 1
+                    } label: {
+                        HStack {
+                            Text("Off")
+                            Spacer()
+                            if control.selectedOption(for: .legible) == nil {
+                                Image(systemName: "checkmark").foregroundStyle(.green)
+                            }
+                        }
+                    }
+                    ForEach(Array(control.subtitleOptions.enumerated()), id: \.offset) { _, option in
+                        Button {
+                            control.select(option, for: .legible)
+                            refreshTick += 1
+                        } label: {
+                            HStack {
+                                Text(option.displayName)
+                                Spacer()
+                                if control.selectedOption(for: .legible) == option {
+                                    Image(systemName: "checkmark").foregroundStyle(.green)
+                                }
+                            }
+                        }
+                    }
+                    if control.subtitleOptions.isEmpty {
+                        Text("No subtitle tracks for this stream.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .id(refreshTick)
+            .navigationTitle("Audio & Subtitles")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
 }
 
 // MARK: - SwiftUI player screen
@@ -170,6 +303,11 @@ struct PlayerView: View {
     @State private var guideTab: ChannelTab = .all
     @State private var cast = CastManager()
     @State private var showCast = false
+    /// 2.0.0 player extras.
+    @State private var audioOnly = false
+    @State private var showTracks = false
+    @State private var sleepTimer = SleepTimer.shared
+    @Environment(EPGStore.self) private var epg
     /// Brief centre play/pause flash after a double-tap (true = resumed).
     @State private var toggleFlash: Bool?
     @Environment(\.dismiss) private var dismiss
@@ -272,12 +410,70 @@ struct PlayerView: View {
                                 .glassControl(cornerRadius: 20, tint: .black)
                                 .foregroundStyle(cast.phase == .idle ? .white : settings.accent.color)
                                 .accessibilityLabel("Chromecast")
+
+                                Menu {
+                                    Section("Sleep Timer") {
+                                        Button {
+                                            sleepTimer.cancel()
+                                        } label: {
+                                            Label("Off", systemImage: sleepTimer.isActive ? "circle" : "checkmark.circle.fill")
+                                        }
+                                        ForEach([15, 30, 60, 90], id: \.self) { minutes in
+                                            Button {
+                                                sleepTimer.start(minutes: minutes)
+                                                showChrome()
+                                            } label: {
+                                                Label("\(minutes) minutes", systemImage: "moon.zzz")
+                                            }
+                                        }
+                                    }
+                                    Button {
+                                        showTracks = true
+                                    } label: {
+                                        Label("Audio & Subtitles", systemImage: "captions.bubble")
+                                    }
+                                    Button {
+                                        audioOnly.toggle()
+                                        showChrome()
+                                    } label: {
+                                        Label(audioOnly ? "Show Video" : "Audio Only",
+                                              systemImage: audioOnly ? "tv" : "headphones")
+                                    }
+                                    Section("Stream Health") {
+                                        Label(healthText, systemImage: "waveform.path.ecg")
+                                    }
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Circle()
+                                            .fill(healthColor)
+                                            .frame(width: 9, height: 9)
+                                        Image(systemName: "ellipsis")
+                                            .font(.callout.weight(.bold))
+                                        if sleepTimer.isActive {
+                                            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                                                Text(sleepTimer.remainingText ?? "")
+                                                    .font(.caption.weight(.semibold))
+                                                    .monospacedDigit()
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 13)
+                                    .padding(.vertical, 10)
+                                }
+                                .glassControl(cornerRadius: 20, tint: .black)
+                                .foregroundStyle(.white)
+                                .accessibilityLabel("More playback options")
                             }
                             // Low enough to clear the native player's own top
                             // control bar (AirPlay / PiP / volume live there).
                             .padding(.top, 58)
                             .padding(.leading, 12)
                             .transition(.opacity)
+                        }
+                    }
+                    .overlay {
+                        if audioOnly {
+                            audioOnlyPanel
                         }
                     }
                     .overlay {
@@ -292,9 +488,18 @@ struct PlayerView: View {
             } else if model.isLoading {
                 VStack(spacing: 14) {
                     ProgressView().controlSize(.large).tint(.white)
-                    Text("Loading \(model.displayName)…")
-                        .foregroundStyle(.white.opacity(0.85))
-                        .font(.callout)
+                    if model.reconnectAttempt > 0 {
+                        Text("Reconnecting… attempt \(model.reconnectAttempt) of 3")
+                            .foregroundStyle(.white)
+                            .font(.callout.weight(.semibold))
+                        Text(model.displayName)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .font(.callout)
+                    } else {
+                        Text("Loading \(model.displayName)…")
+                            .foregroundStyle(.white.opacity(0.85))
+                            .font(.callout)
+                    }
                 }
             } else if let err = model.errorMessage {
                 VStack(spacing: 16) {
@@ -339,6 +544,12 @@ struct PlayerView: View {
         .sheet(isPresented: $showCast) {
             castSheet
         }
+        .sheet(isPresented: $showTracks) {
+            TrackPickerView(control: control)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: SleepTimer.firedNotification)) { _ in
+            control.player?.pause()
+        }
         .onAppear { settings.recordRecent(streamID: model.channel.streamId) }
         .onChange(of: model.channel.streamId) { _, newID in
             settings.recordRecent(streamID: newID)
@@ -357,6 +568,68 @@ struct PlayerView: View {
         .onDisappear {
             cast.stopDiscovery()
             cast.disconnect()
+        }
+    }
+
+    private var healthText: String {
+        switch model.health {
+        case .good: return "Stream health: Good"
+        case .fair: return "Stream health: Fair (reconnecting)"
+        case .poor: return "Stream health: Poor"
+        }
+    }
+
+    private var healthColor: Color {
+        switch model.health {
+        case .good: return .green
+        case .fair: return .yellow
+        case .poor: return .red
+        }
+    }
+
+    /// Audio-only mode (2.0.0): black panel with the channel identity
+    /// while the audio keeps playing underneath.
+    private var audioOnlyPanel: some View {
+        ZStack {
+            Color.black
+            VStack(spacing: 14) {
+                if let url = model.channel.logoURL {
+                    AsyncImage(url: url) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFit()
+                        } else {
+                            Image(systemName: "headphones")
+                                .font(.system(size: 54))
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
+                    .frame(width: 120, height: 120)
+                } else {
+                    Image(systemName: "headphones")
+                        .font(.system(size: 54))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                Text(model.displayName)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                if let now = epg.now(for: model.channel) {
+                    Text(now.name)
+                        .font(.callout)
+                        .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                }
+                Label("Audio only", systemImage: "headphones")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+        }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Haptics.light()
+            showChrome()
         }
     }
 

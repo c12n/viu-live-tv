@@ -290,6 +290,11 @@ final class AppSettings {
         } else {
             customGroups = []
         }
+        if let stored = d.dictionary(forKey: "viu_recent_watched_at") as? [String: Double] {
+            recentWatchedAt = Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in
+                Int(key).map { ($0, Date(timeIntervalSince1970: value)) }
+            })
+        }
         if let data = d.data(forKey: Keys.recentsByProfile),
            let decoded = try? JSONDecoder().decode([String: [Int]].self, from: data) {
             recentsByProfile = decoded
@@ -389,11 +394,20 @@ final class AppSettings {
 
     // MARK: Recently watched
 
+    /// When each recent channel was last opened (2.0.0, powers the
+    /// "Jump back in" banner). Persisted as epoch seconds by stream ID.
+    private(set) var recentWatchedAt: [Int: Date] = [:]
+
     func recordRecent(streamID: Int) {
         var ids = recentChannelIDs
         ids.removeAll { $0 == streamID }
         ids.insert(streamID, at: 0)
         recentChannelIDs = Array(ids.prefix(12))
+        recentWatchedAt[streamID] = Date()
+        let stored = Dictionary(uniqueKeysWithValues: recentWatchedAt.map {
+            (String($0.key), $0.value.timeIntervalSince1970)
+        })
+        UserDefaults.standard.set(stored, forKey: "viu_recent_watched_at")
     }
 
     // MARK: Programme reminders ("Remind Me")

@@ -58,6 +58,9 @@ struct ChannelListView: View {
     // External-player alert state.
     @State private var externalAlert: ExternalAlert?
 
+    // Timeline guide (2.0.0).
+    @State private var showGuide = false
+
     // Parental-controls PIN gate state.
     @State private var showPIN = false
     @State private var pendingUnlock: (() -> Void)?
@@ -142,7 +145,105 @@ struct ChannelListView: View {
         if !settings.languageFilter.isEmpty {
             result = result.filter { $0.language.code == settings.languageFilter }
         }
+        // Favorites show in the user's order, pinned first (2.0.0).
+        if tab == .favorites {
+            result = favorites.orderedChannels(from: result)
+        }
         return result
+    }
+
+    // MARK: 2.0.0 home sections (jump back in / sports / groups)
+
+    /// The most recent channel, if it was watched within 3 hours and
+    /// its current programme still has time left.
+    private var jumpBackChannel: EPGChannel? {
+        guard tab == .all, search.isEmpty, !parental.kidsModeEnabled,
+              let id = settings.recentChannelIDs.first,
+              let at = settings.recentWatchedAt[id],
+              Date().timeIntervalSince(at) < 3 * 3600,
+              let channel = epg.channel(for: id),
+              let now = channel.nowProgramme(),
+              let left = now.minutesLeft(), left > 5
+        else { return nil }
+        return channel
+    }
+
+    @ViewBuilder
+    private var jumpBackSection: some View {
+        if let channel = jumpBackChannel, let now = channel.nowProgramme() {
+            Section {
+                Button {
+                    play(channel)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.largeTitle)
+                            .foregroundStyle(settings.accent.color)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Jump back in")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(settings.accent.color)
+                            Text(channel.name)
+                                .font(.headline)
+                                .lineLimit(1)
+                            Text("\(now.name) · \(now.minutesLeft() ?? 0) min left")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sportsRailSection: some View {
+        if tab == .all && search.isEmpty && !parental.kidsModeEnabled {
+            let live = epg.liveSportsChannels().filter {
+                settings.languageFilter.isEmpty || $0.language.code == settings.languageFilter
+            }
+            if !live.isEmpty {
+                Section {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(live) { channel in
+                                recentChip(channel)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .listRowInsets(EdgeInsets(top: 2, leading: 14, bottom: 2, trailing: 14))
+                } header: {
+                    Text("Live Sports Now")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var customGroupSections: some View {
+        if tab == .all && search.isEmpty && selectedCategory == nil && !parental.kidsModeEnabled {
+            ForEach(settings.activeGroups) { group in
+                let channels = group.channelIDs
+                    .compactMap { epg.channel(for: $0) }
+                    .filter { settings.languageFilter.isEmpty || $0.language.code == settings.languageFilter }
+                if !channels.isEmpty {
+                    Section {
+                        ForEach(channels) { channel in
+                            row(for: channel)
+                                .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 14))
+                        }
+                    } header: {
+                        Text(group.name)
+                    }
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -182,6 +283,8 @@ struct ChannelListView: View {
                 }
             }
 
+            jumpBackSection
+
             if tab == .all && search.isEmpty && !recentChannels.isEmpty {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -197,6 +300,10 @@ struct ChannelListView: View {
                     Text("Recently Watched")
                 }
             }
+
+            sportsRailSection
+
+            customGroupSections
 
             Section {
                 if visibleChannels.isEmpty {
@@ -238,6 +345,22 @@ struct ChannelListView: View {
             Alert(title: Text(alert.title),
                   message: Text(alert.message),
                   dismissButton: .default(Text("OK")))
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showGuide = true
+                } label: {
+                    Image(systemName: "calendar")
+                }
+                .accessibilityLabel("Programme Guide")
+            }
+        }
+        .sheet(isPresented: $showGuide) {
+            GuideGridView { channel in
+                showGuide = false
+                play(channel)
+            }
         }
         .sheet(isPresented: $showPIN) {
             PINEntryView(mode: .verify) { unlocked in
@@ -409,7 +532,21 @@ struct ChannelListView: View {
             },
             onOpenExternal: { openExternal(channel) },
             tapToPlay: isSidebar,
-            isLocked: parental.isEnabled && parental.isLocked(channel.streamId)
+            isLocked: parental.isEnabled && parental.isLocked(channel.streamId),
+            isPinned: favorites.isPinned(channel.streamId),
+            onTogglePin: favorites.isFavorite(channel.streamId)
+                ? { favorites.setPinned(channel.streamId, !favorites.isPinned(channel.streamId)) } : nil,
+            onMoveUp: tab == .favorites && favorites.isFavorite(channel.streamId)
+                ? { favorites.moveUp(channel.streamId) } : nil,
+            onMoveDown: tab == .favorites && favorites.isFavorite(channel.streamId)
+                ? { favorites.moveDown(channel.streamId) } : nil,
+            groupItems: settings.activeGroups.map {
+                (group: $0, isMember: settings.groupContains($0.id, streamID: channel.streamId))
+            },
+            onToggleGroup: { group in
+                settings.setInGroup(group.id, streamID: channel.streamId,
+                                    member: !settings.groupContains(group.id, streamID: channel.streamId))
+            }
         )
 
         if let onChannelPicked {
@@ -446,7 +583,8 @@ struct ChannelListView: View {
                         onOpenExternal: { openExternal(channel) },
                         tapToPlay: false,
                         favoriteButtonInteractive: false,
-                        isLocked: parental.isEnabled && parental.isLocked(channel.streamId)
+                        isLocked: parental.isEnabled && parental.isLocked(channel.streamId),
+                        isPinned: favorites.isPinned(channel.streamId)
                     )
                 }
                 .buttonStyle(.plain)
@@ -538,5 +676,234 @@ struct ChannelListView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Timeline guide grid (2.0.0)
+
+/// A classic timeline guide: channels as rows, the next 6 hours as a
+/// horizontal timeline, programme blocks sized by duration. Tapping a
+/// block opens its detail (Play / Remind Me / Favorite).
+struct GuideGridView: View {
+    @Environment(EPGStore.self) private var epg
+    @Environment(AppSettings.self) private var settings
+    @Environment(FavoritesStore.self) private var favorites
+    @Environment(ParentalControls.self) private var parental
+    @Environment(\.dismiss) private var dismiss
+
+    var onPlay: (EPGChannel) -> Void
+
+    @State private var detail: GuideDetail?
+
+    struct GuideDetail: Identifiable {
+        let id = UUID()
+        let channel: EPGChannel
+        let programme: EPGProgramme
+    }
+
+    private let hoursShown = 6
+    private let pxPerSecond: CGFloat = 0.052
+    private var totalWidth: CGFloat { CGFloat(hoursShown * 3600) * pxPerSecond }
+    private let labelWidth: CGFloat = 128
+
+    private var windowStart: Date {
+        let now = Date()
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.year, .month, .day, .hour], from: now)
+        return cal.date(from: comps) ?? now
+    }
+    private var windowEnd: Date { windowStart.addingTimeInterval(TimeInterval(hoursShown * 3600)) }
+
+    private var guideChannels: [EPGChannel] {
+        var result = epg.channels
+        if parental.kidsModeEnabled {
+            result = result.filter { epg.channelCategories[$0.streamId]?.contains("KIDS") == true }
+        }
+        if settings.sportsModeEnabled {
+            result = result.filter { epg.isSports($0) }
+        }
+        if !settings.languageFilter.isEmpty {
+            result = result.filter { $0.language.code == settings.languageFilter }
+        }
+        return Array(result.prefix(120))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(.vertical) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        headerRow
+                        ForEach(guideChannels) { channel in
+                            channelRow(channel)
+                            Divider().padding(.leading, labelWidth)
+                        }
+                        if guideChannels.count >= 120 {
+                            Text("Showing the first 120 channels")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .padding(10)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Guide")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .sheet(item: $detail) { d in
+                detailView(d)
+            }
+        }
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: labelWidth, height: 22)
+            ZStack(alignment: .leading) {
+                ForEach(0..<hoursShown, id: \.self) { h in
+                    Text(windowStart.addingTimeInterval(TimeInterval(h * 3600))
+                        .formatted(date: .omitted, time: .shortened))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .offset(x: CGFloat(h * 3600) * pxPerSecond + 4)
+                }
+            }
+            .frame(width: totalWidth, height: 22, alignment: .leading)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func channelRow(_ channel: EPGChannel) -> some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 6) {
+                if let url = channel.logoURL {
+                    AsyncImage(url: url) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFit()
+                        } else {
+                            Image(systemName: "tv").foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(width: 30, height: 30)
+                }
+                Text(channel.name)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(2)
+            }
+            .frame(width: labelWidth - 8, alignment: .leading)
+            .padding(.trailing, 8)
+
+            ZStack(alignment: .leading) {
+                // "Now" line.
+                Rectangle()
+                    .fill(Color.red)
+                    .frame(width: 2)
+                    .offset(x: CGFloat(Date().timeIntervalSince(windowStart)) * pxPerSecond)
+                ForEach(blocks(for: channel), id: \.programme.id) { block in
+                    Button {
+                        detail = GuideDetail(channel: channel, programme: block.programme)
+                    } label: {
+                        Text(block.programme.name)
+                            .font(.caption2)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 5)
+                            .frame(width: max(30, block.width), height: 44, alignment: .leading)
+                            .background(
+                                settings.accent.color.opacity(block.programme.isLive() ? 0.4 : 0.16),
+                                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: block.offset)
+                }
+            }
+            .frame(width: totalWidth, height: 48, alignment: .leading)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private struct Block {
+        let programme: EPGProgramme
+        let offset: CGFloat
+        let width: CGFloat
+    }
+
+    private func blocks(for channel: EPGChannel) -> [Block] {
+        let start = windowStart, end = windowEnd
+        return channel.schedule.compactMap { prog in
+            guard let s = prog.timeStart, let e = prog.timeEnd, e > start, s < end else { return nil }
+            let clampedStart = max(s, start), clampedEnd = min(e, end)
+            return Block(
+                programme: prog,
+                offset: CGFloat(clampedStart.timeIntervalSince(start)) * pxPerSecond + 1,
+                width: CGFloat(clampedEnd.timeIntervalSince(clampedStart)) * pxPerSecond - 2
+            )
+        }
+    }
+
+    private func detailView(_ d: GuideDetail) -> some View {
+        NavigationStack {
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(d.programme.name)
+                            .font(.title3.weight(.bold))
+                        Text(d.channel.name)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        if let s = d.programme.timeStart, let e = d.programme.timeEnd {
+                            Text("\(s.formatted(date: .omitted, time: .shortened)) – \(e.formatted(date: .omitted, time: .shortened))")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        if !d.programme.description.isEmpty {
+                            Text(d.programme.description)
+                                .font(.body)
+                                .padding(.top, 2)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                Section {
+                    Button {
+                        detail = nil
+                        onPlay(d.channel)
+                    } label: {
+                        Label("Play \(d.channel.name)", systemImage: "play.fill")
+                    }
+                    Button {
+                        favorites.toggle(d.channel)
+                    } label: {
+                        Label(favorites.isFavorite(d.channel.streamId) ? "Remove Favorite" : "Favorite",
+                              systemImage: favorites.isFavorite(d.channel.streamId) ? "heart.fill" : "heart")
+                    }
+                    if let start = d.programme.timeStart, start > Date() {
+                        let reminded = settings.hasReminder(streamID: d.channel.streamId, start: start)
+                        Button {
+                            Task {
+                                await settings.setReminder(channel: d.channel,
+                                                           programme: d.programme,
+                                                           enabled: !reminded)
+                            }
+                        } label: {
+                            Label(reminded ? "Cancel Reminder" : "Remind Me",
+                                  systemImage: reminded ? "bell.slash" : "bell")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Programme")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { detail = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
