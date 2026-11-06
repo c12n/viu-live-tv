@@ -103,6 +103,64 @@ enum AccentChoice: String, CaseIterable, Identifiable {
     }
 }
 
+/// A viewer profile (2.0.0). Each profile keeps its own favorites,
+/// recents and custom groups. The first profile is the "main" one: its
+/// favorites are the ones that sync with the Viu account on the server;
+/// other profiles are local-only.
+struct ViewerProfile: Codable, Identifiable, Equatable {
+    var id: UUID
+    var name: String
+    /// SF Symbol name shown next to the profile.
+    var symbol: String = "person.fill"
+}
+
+/// A user-built channel group (2.0.0), belonging to one profile.
+struct CustomGroup: Codable, Identifiable, Equatable {
+    var id: UUID
+    var profileID: UUID
+    var name: String
+    var channelIDs: [Int] = []
+}
+
+/// App-wide sleep timer (2.0.0). Players observe the fire notification
+/// and pause. Lives in AppSettings.swift so every platform target can
+/// share it without project-file changes.
+@Observable
+final class SleepTimer {
+    static let shared = SleepTimer()
+    static let firedNotification = Notification.Name("ViuSleepTimerFired")
+
+    private(set) var endDate: Date?
+    private var timer: Timer?
+
+    var isActive: Bool { endDate != nil }
+
+    var remainingText: String? {
+        guard let endDate else { return nil }
+        let secs = max(0, Int(endDate.timeIntervalSinceNow))
+        return String(format: "%d:%02d", secs / 60, secs % 60)
+    }
+
+    func start(minutes: Int) {
+        cancel()
+        guard minutes > 0 else { return }
+        let fireDate = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        endDate = fireDate
+        let t = Timer(fireAt: fireDate, interval: 0, repeats: false) { [weak self] _ in
+            self?.endDate = nil
+            NotificationCenter.default.post(name: Self.firedNotification, object: nil)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    func cancel() {
+        timer?.invalidate()
+        timer = nil
+        endDate = nil
+    }
+}
+
 @Observable
 final class AppSettings {
     var appearance: AppearanceMode {
@@ -144,6 +202,32 @@ final class AppSettings {
     var recentChannelIDs: [Int] {
         didSet { UserDefaults.standard.set(recentChannelIDs, forKey: Keys.recents) }
     }
+    /// Extra-large mode (2.0.0): supersize text and rows app-wide.
+    var extraLargeMode: Bool {
+        didSet { UserDefaults.standard.set(extraLargeMode, forKey: Keys.extraLarge) }
+    }
+    /// Viewer profiles (2.0.0). The first entry is the main profile.
+    var profiles: [ViewerProfile] {
+        didSet { persistProfiles() }
+    }
+    /// The active profile's id (2.0.0).
+    var activeProfileID: UUID {
+        didSet { UserDefaults.standard.set(activeProfileID.uuidString, forKey: Keys.activeProfile) }
+    }
+    /// Custom channel groups across all profiles (2.0.0).
+    var customGroups: [CustomGroup] {
+        didSet { persistGroups() }
+    }
+    /// Recents for non-active profiles (2.0.0); the active profile's
+    /// recents live in `recentChannelIDs` as before.
+    private var recentsByProfile: [String: [Int]] {
+        didSet {
+            if let data = try? JSONEncoder().encode(recentsByProfile) {
+                UserDefaults.standard.set(data, forKey: Keys.recentsByProfile)
+            }
+        }
+    }
+
     /// Pending "Remind Me" notification identifiers
     /// ("viu-remind-<streamID>-<startEpoch>").
     private(set) var reminderIDs: Set<String> {
@@ -162,7 +246,16 @@ final class AppSettings {
         static let languageFilter = "viu_language_filter"
         static let recents = "viu_recent_channels"
         static let reminders = "viu_programme_reminders"
+        static let extraLarge = "viu_extra_large_mode"
+        static let profiles = "viu_profiles"
+        static let activeProfile = "viu_active_profile"
+        static let groups = "viu_custom_groups"
+        static let recentsByProfile = "viu_recents_by_profile"
     }
+
+    /// The main profile always uses this fixed id so its UserDefaults
+    /// keys (favorites etc.) stay the legacy unsuffixed ones.
+    static let mainProfileID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     init() {
         let d = UserDefaults.standard
@@ -177,6 +270,121 @@ final class AppSettings {
         languageFilter          = d.string(forKey: Keys.languageFilter) ?? ""
         recentChannelIDs        = d.array(forKey: Keys.recents) as? [Int] ?? []
         reminderIDs             = Set(d.array(forKey: Keys.reminders) as? [String] ?? [])
+        extraLargeMode          = d.bool(forKey: Keys.extraLarge)
+        if let data = d.data(forKey: Keys.profiles),
+           let decoded = try? JSONDecoder().decode([ViewerProfile].self, from: data),
+           !decoded.isEmpty {
+            profiles = decoded
+        } else {
+            profiles = [ViewerProfile(id: Self.mainProfileID, name: "Main", symbol: "person.fill")]
+        }
+        if let raw = d.string(forKey: Keys.activeProfile), let uuid = UUID(uuidString: raw),
+           profiles.contains(where: { $0.id == uuid }) {
+            activeProfileID = uuid
+        } else {
+            activeProfileID = profiles[0].id
+        }
+        if let data = d.data(forKey: Keys.groups),
+           let decoded = try? JSONDecoder().decode([CustomGroup].self, from: data) {
+            customGroups = decoded
+        } else {
+            customGroups = []
+        }
+        if let data = d.data(forKey: Keys.recentsByProfile),
+           let decoded = try? JSONDecoder().decode([String: [Int]].self, from: data) {
+            recentsByProfile = decoded
+        } else {
+            recentsByProfile = [:]
+        }
+    }
+
+    // MARK: Profiles (2.0.0)
+
+    var activeProfile: ViewerProfile {
+        profiles.first { $0.id == activeProfileID } ?? profiles[0]
+    }
+
+    var isMainProfileActive: Bool { activeProfileID == profiles[0].id }
+
+    /// Switch the active profile: parks the current profile's recents
+    /// and loads the new profile's. Callers must also switch the
+    /// FavoritesStore (the root views do both together).
+    func switchProfile(to id: UUID) {
+        guard id != activeProfileID, profiles.contains(where: { $0.id == id }) else { return }
+        recentsByProfile[activeProfileID.uuidString] = recentChannelIDs
+        activeProfileID = id
+        recentChannelIDs = recentsByProfile[id.uuidString] ?? []
+    }
+
+    @discardableResult
+    func addProfile(name: String, symbol: String = "person.fill") -> ViewerProfile {
+        let profile = ViewerProfile(id: UUID(), name: name, symbol: symbol)
+        profiles.append(profile)
+        return profile
+    }
+
+    func renameProfile(_ id: UUID, to name: String) {
+        guard let i = profiles.firstIndex(where: { $0.id == id }) else { return }
+        profiles[i].name = name
+    }
+
+    /// Deletes a profile and its groups/recents. The main (first)
+    /// profile cannot be deleted.
+    func deleteProfile(_ id: UUID) {
+        guard profiles.count > 1, id != profiles[0].id else { return }
+        if activeProfileID == id { switchProfile(to: profiles[0].id) }
+        profiles.removeAll { $0.id == id }
+        customGroups.removeAll { $0.profileID == id }
+        recentsByProfile[id.uuidString] = nil
+    }
+
+    private func persistProfiles() {
+        if let data = try? JSONEncoder().encode(profiles) {
+            UserDefaults.standard.set(data, forKey: Keys.profiles)
+        }
+    }
+
+    // MARK: Custom groups (2.0.0)
+
+    var activeGroups: [CustomGroup] {
+        customGroups.filter { $0.profileID == activeProfileID }
+    }
+
+    @discardableResult
+    func addGroup(name: String) -> CustomGroup {
+        let group = CustomGroup(id: UUID(), profileID: activeProfileID, name: name, channelIDs: [])
+        customGroups.append(group)
+        return group
+    }
+
+    func renameGroup(_ id: UUID, to name: String) {
+        guard let i = customGroups.firstIndex(where: { $0.id == id }) else { return }
+        customGroups[i].name = name
+    }
+
+    func deleteGroup(_ id: UUID) {
+        customGroups.removeAll { $0.id == id }
+    }
+
+    func groupContains(_ groupID: UUID, streamID: Int) -> Bool {
+        customGroups.first { $0.id == groupID }?.channelIDs.contains(streamID) ?? false
+    }
+
+    func setInGroup(_ groupID: UUID, streamID: Int, member: Bool) {
+        guard let i = customGroups.firstIndex(where: { $0.id == groupID }) else { return }
+        if member {
+            if !customGroups[i].channelIDs.contains(streamID) {
+                customGroups[i].channelIDs.append(streamID)
+            }
+        } else {
+            customGroups[i].channelIDs.removeAll { $0 == streamID }
+        }
+    }
+
+    private func persistGroups() {
+        if let data = try? JSONEncoder().encode(customGroups) {
+            UserDefaults.standard.set(data, forKey: Keys.groups)
+        }
     }
 
     // MARK: Recently watched
@@ -263,6 +471,24 @@ final class ParentalControls {
     var kidsModeEnabled: Bool {
         didSet { UserDefaults.standard.set(kidsModeEnabled, forKey: Keys.kidsMode) }
     }
+    /// Kids bedtime (2.0.0): while Kids Mode is on, the app locks at
+    /// the bedtime hour until 06:00.
+    var kidsBedtimeEnabled: Bool {
+        didSet { UserDefaults.standard.set(kidsBedtimeEnabled, forKey: Keys.kidsBedtime) }
+    }
+    /// Bedtime as minutes after midnight (default 1200 = 20:00).
+    var kidsBedtimeMinutes: Int {
+        didSet { UserDefaults.standard.set(kidsBedtimeMinutes, forKey: Keys.kidsBedtimeMinutes) }
+    }
+
+    /// True when Kids Mode is on, bedtime is enabled, and the current
+    /// time is at/after bedtime or before 06:00.
+    func isBedtimeActive(at date: Date = Date()) -> Bool {
+        guard kidsModeEnabled, kidsBedtimeEnabled else { return false }
+        let cal = Calendar.current
+        let mins = cal.component(.hour, from: date) * 60 + cal.component(.minute, from: date)
+        return mins >= kidsBedtimeMinutes || mins < 360
+    }
     private(set) var lockedIDs: Set<Int>
     private var resetObserver: NSObjectProtocol?
 
@@ -270,6 +496,8 @@ final class ParentalControls {
         static let enabled = "viu_parental_enabled"
         static let locked = "viu_locked_channel_ids"
         static let kidsMode = "viu_kids_mode"
+        static let kidsBedtime = "viu_kids_bedtime"
+        static let kidsBedtimeMinutes = "viu_kids_bedtime_minutes"
         static let pinAccount = "parental_pin"
         static let resetCode = "viu_pin_reset_code"
         static let resetCodeAt = "viu_pin_reset_code_at"
@@ -278,6 +506,8 @@ final class ParentalControls {
     init() {
         isEnabled = UserDefaults.standard.bool(forKey: Keys.enabled)
         kidsModeEnabled = UserDefaults.standard.bool(forKey: Keys.kidsMode)
+        kidsBedtimeEnabled = UserDefaults.standard.bool(forKey: Keys.kidsBedtime)
+        kidsBedtimeMinutes = UserDefaults.standard.object(forKey: Keys.kidsBedtimeMinutes) as? Int ?? 1200
         lockedIDs = Set(UserDefaults.standard.array(forKey: Keys.locked) as? [Int] ?? [])
         resetObserver = NotificationCenter.default.addObserver(
             forName: Notification.Name("ViuParentalReset"), object: nil, queue: .main
@@ -287,6 +517,8 @@ final class ParentalControls {
     private func reloadFromStorage() {
         isEnabled = UserDefaults.standard.bool(forKey: Keys.enabled)
         kidsModeEnabled = UserDefaults.standard.bool(forKey: Keys.kidsMode)
+        kidsBedtimeEnabled = UserDefaults.standard.bool(forKey: Keys.kidsBedtime)
+        kidsBedtimeMinutes = UserDefaults.standard.object(forKey: Keys.kidsBedtimeMinutes) as? Int ?? 1200
         lockedIDs = Set(UserDefaults.standard.array(forKey: Keys.locked) as? [Int] ?? [])
     }
 
@@ -348,6 +580,7 @@ final class ParentalControls {
     static func clearStorage() {
         UserDefaults.standard.set(false, forKey: Keys.enabled)
         UserDefaults.standard.set(false, forKey: Keys.kidsMode)
+        UserDefaults.standard.set(false, forKey: Keys.kidsBedtime)
         UserDefaults.standard.removeObject(forKey: Keys.locked)
         Keychain.shared.delete(account: Keys.pinAccount)
         NotificationCenter.default.post(name: Notification.Name("ViuParentalReset"), object: nil)

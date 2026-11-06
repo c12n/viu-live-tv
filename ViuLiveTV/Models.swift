@@ -270,6 +270,12 @@ struct EPGProgramme: Decodable, Identifiable, Hashable {
         guard let start = timeStart, let end = timeEnd else { return false }
         return now >= start && now < end
     }
+
+    /// Whole minutes left until the programme ends (2.0.0).
+    func minutesLeft(at now: Date = Date()) -> Int? {
+        guard let e = timeEnd else { return nil }
+        return max(0, Int(e.timeIntervalSince(now) / 60))
+    }
 }
 
 /// One channel from epgjsonV2.php. This is the primary channel list.
@@ -347,6 +353,12 @@ struct EPGChannel: Decodable, Identifiable, Hashable {
         return schedule
             .filter { ($0.timeStart ?? .distantFuture) <= date }
             .max(by: { ($0.timeStart ?? .distantPast) < ($1.timeStart ?? .distantPast) })
+    }
+
+    /// True when any of the channel's category tags is a sports tag (2.0.0).
+    var isSportsChannel: Bool {
+        guard let tags else { return false }
+        return tags.uppercased().contains("SPORT")
     }
 
     /// The next upcoming programme after `date`.

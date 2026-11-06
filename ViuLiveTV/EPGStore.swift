@@ -141,6 +141,16 @@ final class EPGStore {
     private(set) var categoryOrder: [String] =
         UserDefaults.standard.stringArray(forKey: "viu_category_order") ?? []
 
+    /// Channels with a programme live right now in a sports
+    /// category (2.0.0, "Live Sports Now" rail).
+    func liveSportsChannels(at date: Date = Date()) -> [EPGChannel] {
+        channels.filter { ch in
+            let cats = channelCategories[ch.streamId] ?? []
+            let inSports = cats.contains(where: { $0.contains("SPORT") }) || ch.isSportsChannel
+            return inSports && ch.nowProgramme(at: date) != nil
+        }
+    }
+
     func isCategoryHidden(_ parameterName: String) -> Bool {
         hiddenCategoryTags.contains(parameterName)
     }
