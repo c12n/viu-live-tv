@@ -27,19 +27,20 @@
       ],
       "versions": [
         {
-          "version": "1.5.0",
+          "version": "2.0.0",
           "date": "2026-11-03",
-          "localizedDescription": "Recently Watched, Last Channel, programme search, Remind Me and Multiview on iPad.",
-          "downloadURL": "https://github.com/c12n/viu-live-tv/releases/download/v1.5.0/ViuLiveTV-iOS-v1.5.0.ipa",
-          "size": 3385332,
-          "minOSVersion": "17.0"
+          "localizedDescription": "2.0.0: timeline programme guide, viewer profiles, custom channel groups, favorites ordering and pins, Live Sports Now, jump back in, sleep timer, audio and subtitle track picker, audio only mode, auto reconnect, Kids bedtime, extra-large mode.",
+          "downloadURL": "https://github.com/c12n/viu-live-tv/releases/download/v2.0.0/ViuLiveTV-iOS-v2.0.0.ipa",
+          "size": 3515017,
+          "minOSVersion": "17.0",
+          "versionDate": "2026-11-06"
         }
       ],
-      "version": "1.5.0",
-      "versionDate": "2026-11-03",
-      "versionDescription": "Recently Watched, Last Channel, programme search, Remind Me and Multiview on iPad.",
-      "downloadURL": "https://github.com/c12n/viu-live-tv/releases/download/v1.5.0/ViuLiveTV-iOS-v1.5.0.ipa",
-      "size": 3385332,
+      "version": "2.0.0",
+      "versionDate": "2026-11-06",
+      "versionDescription": "2.0.0: timeline programme guide, viewer profiles, custom channel groups, favorites ordering and pins, Live Sports Now, jump back in, sleep timer, audio and subtitle track picker, audio only mode, auto reconnect, Kids bedtime, extra-large mode.",
+      "downloadURL": "https://github.com/c12n/viu-live-tv/releases/download/v2.0.0/ViuLiveTV-iOS-v2.0.0.ipa",
+      "size": 3515017,
       "minOSVersion": "17.0",
       "beta": false,
       "appPermissions": {
