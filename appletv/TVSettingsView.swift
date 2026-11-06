@@ -13,6 +13,7 @@ struct TVSettingsView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(EPGStore.self) private var epg
     @Environment(AppSettings.self) private var settings
+    @Environment(FavoritesStore.self) private var favorites
     @Environment(ParentalControls.self) private var parental
 
     private enum PINFlow: Identifiable {
@@ -81,6 +82,77 @@ struct TVSettingsView: View {
                 Section("Modes") {
                     Toggle("Sports Mode", isOn: sportsBinding)
                     Toggle("Kids Mode", isOn: kidsBinding)
+                    if parental.kidsModeEnabled {
+                        Toggle("Kids Bedtime", isOn: bedtimeBinding)
+                        if parental.kidsBedtimeEnabled {
+                            HStack {
+                                Text("Bedtime")
+                                Spacer()
+                                Button("−1h") {
+                                    parental.kidsBedtimeMinutes = (parental.kidsBedtimeMinutes + 1380) % 1440
+                                }
+                                Text(bedtimeText)
+                                    .monospacedDigit()
+                                Button("+1h") {
+                                    parental.kidsBedtimeMinutes = (parental.kidsBedtimeMinutes + 60) % 1440
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section("Profiles") {
+                    ForEach(settings.profiles) { profile in
+                        HStack {
+                            Image(systemName: profile.symbol)
+                            Text(profile.name)
+                            if profile.id == settings.profiles.first?.id {
+                                Text("Main").foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if profile.id == settings.activeProfileID {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Button("Use") {
+                                    settings.switchProfile(to: profile.id)
+                                    favorites.switchProfile(to: profile.id)
+                                }
+                            }
+                            if profile.id != settings.profiles.first?.id {
+                                Button("Delete", role: .destructive) {
+                                    let wasActive = profile.id == settings.activeProfileID
+                                    settings.deleteProfile(profile.id)
+                                    if wasActive {
+                                        favorites.switchProfile(to: settings.activeProfileID)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text("Add and name profiles in the iPhone or Mac app — they share the same profiles. Only the Main profile syncs favorites with your Viu account.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("My Groups") {
+                    if settings.activeGroups.isEmpty {
+                        Text("No groups yet. Create groups in the iPhone or Mac app; they show up here as channel rows.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(settings.activeGroups) { group in
+                        LabeledContent(group.name, value: "\(group.channelIDs.count) channels")
+                    }
+                }
+
+                Section("Remote Shortcuts") {
+                    LabeledContent("Play / Pause", value: "Play/Pause button or OK")
+                    LabeledContent("Previous / Next channel", value: "↑ / ↓ while watching")
+                    LabeledContent("Channel guide", value: "Guide button in the banner")
+                    LabeledContent("Multiview", value: "Multiview button in the banner")
+                    LabeledContent("More options (sleep timer, audio, subtitles)", value: "More button in the banner")
+                    LabeledContent("Favorite / groups / pin", value: "Long-press a channel card")
+                    LabeledContent("Back", value: "Menu button")
                 }
 
                 Section("Parental Controls") {
@@ -110,7 +182,7 @@ struct TVSettingsView: View {
                 }
 
                 Section("About") {
-                    LabeledContent("Version", value: "1.5.0")
+                    LabeledContent("Version", value: "2.0.0")
                     Text("Viu Live TV for Apple TV\nCopyright (c) 2026 c12n Apps")
                         .foregroundStyle(.secondary)
                 }
@@ -130,6 +202,18 @@ struct TVSettingsView: View {
 
     private var appearanceBinding: Binding<AppearanceMode> {
         Binding(get: { settings.appearance }, set: { settings.appearance = $0 })
+    }
+
+    private var bedtimeBinding: Binding<Bool> {
+        Binding(get: { parental.kidsBedtimeEnabled },
+                set: { parental.kidsBedtimeEnabled = $0 })
+    }
+
+    private var bedtimeText: String {
+        let h = parental.kidsBedtimeMinutes / 60
+        let m = parental.kidsBedtimeMinutes % 60
+        let date = Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: Date()) ?? Date()
+        return date.formatted(date: .omitted, time: .shortened)
     }
 
     private var sportsBinding: Binding<Bool> {
