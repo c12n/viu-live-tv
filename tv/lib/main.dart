@@ -11,6 +11,7 @@
 // Live TV" resolves to the channel and starts playback.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -53,6 +54,54 @@ const Set<String> kSportsParams = {
 bool isSportsTag(String param) =>
     param.contains('SPORT') || kSportsParams.contains(param);
 
+/// "9:30 PM" style wall-clock formatting (no intl dependency).
+String fmtTime(DateTime t) {
+  var h = t.hour % 12;
+  if (h == 0) h = 12;
+  final m = t.minute.toString().padLeft(2, '0');
+  final ap = t.hour >= 12 ? 'PM' : 'AM';
+  return '$h:$m $ap';
+}
+
+String fmtMinutesOfDay(int mins) =>
+    fmtTime(DateTime(2024, 1, 1, mins ~/ 60, mins % 60));
+
+// ---------------------------------------------------------------------------
+// Profiles + custom groups (2.0.0) — device-local, per profile
+// ---------------------------------------------------------------------------
+
+class Profile {
+  final String id;
+  String name;
+  Profile(this.id, this.name);
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name};
+
+  factory Profile.fromJson(Map<String, dynamic> json) => Profile(
+        (json['id'] ?? 'main').toString(),
+        (json['name'] ?? 'Main').toString(),
+      );
+}
+
+class ChannelGroup {
+  final String id;
+  String name;
+  List<int> channelIds;
+  ChannelGroup(this.id, this.name, [List<int>? channelIds])
+      : channelIds = channelIds ?? [];
+
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'name': name, 'channelIds': channelIds};
+
+  factory ChannelGroup.fromJson(Map<String, dynamic> json) => ChannelGroup(
+        (json['id'] ?? '').toString(),
+        (json['name'] ?? 'Group').toString(),
+        ((json['channelIds'] as List?) ?? [])
+            .map((e) => (e as num).toInt())
+            .toList(),
+      );
+}
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
@@ -89,6 +138,39 @@ class AppState extends ChangeNotifier {
   bool kidsMode = false;
   bool parentalEnabled = false;
   String? customPin;
+
+  // 2.0.0: profiles (device-local). Favorites / recents / groups /
+  // favorite order + pins are stored per profile; 'main' keeps the
+  // legacy un-suffixed favorites/recents keys.
+  List<Profile> profiles = [Profile('main', 'Main')];
+  String activeProfileId = 'main';
+
+  List<ChannelGroup> groups = [];
+
+  /// Favorite display order (unpinned tail) and pinned favorites, both
+  /// as stream-id lists in display order.
+  List<int> favOrder = [];
+  List<int> favPins = [];
+
+  // 2.0.0: display + kids-bedtime settings (app-global).
+  bool extraLarge = false;
+  bool kidsBedtimeEnabled = false;
+  int kidsBedtimeMinutes = 1200; // 20:00
+
+  String get _favKey => activeProfileId == 'main'
+      ? 'viu_favorites'
+      : 'viu_favorites_$activeProfileId';
+  String get _recentsKey => activeProfileId == 'main'
+      ? 'viu_recents'
+      : 'viu_recents_$activeProfileId';
+  String get _groupsKey => 'viu_groups_$activeProfileId';
+  String get _favOrderKey => 'viu_fav_order_$activeProfileId';
+  String get _favPinsKey => 'viu_fav_pins_$activeProfileId';
+
+  Profile get activeProfile => profiles.firstWhere(
+        (p) => p.id == activeProfileId,
+        orElse: () => profiles.first,
+      );
 
   /// Voice/Assistant intents land here (see MainActivity.kt); the home
   /// shell observes and acts once the EPG is loaded.
@@ -144,7 +226,10 @@ class AppState extends ChangeNotifier {
   }
 
   List<EPGChannel> favoriteChannels() {
-    var favs = all.where((c) => favorites.contains(c.streamId)).toList();
+    var favs = <EPGChannel>[
+      for (final id in _orderedFavoriteIds())
+        if (channelById(id) != null) channelById(id)!,
+    ];
     if (kidsMode) {
       favs = favs.where((c) => c.tags.contains('KIDS')).toList();
     }
@@ -152,6 +237,153 @@ class AppState extends ChangeNotifier {
       favs = favs.where((c) => c.tags.any(isSportsTag)).toList();
     }
     return _applyLanguage(favs);
+  }
+
+  /// Display order for favorites: pinned first (pin order), then the
+  /// stored order, then any remaining favorites in EPG order.
+  List<int> _orderedFavoriteIds() {
+    final out = <int>[];
+    void push(int id) {
+      if (favorites.contains(id) && !out.contains(id)) out.add(id);
+    }
+
+    favPins.forEach(push);
+    favOrder.forEach(push);
+    for (final c in all) {
+      push(c.streamId);
+    }
+    favorites.forEach(push);
+    return out;
+  }
+
+  /// Rewrite pins/order from a full display-order list (used by the
+  /// pin + move actions so the two lists never disagree).
+  void _commitFavoriteOrder(List<int> ordered) {
+    final pinSet = favPins.toSet();
+    favPins = ordered.where(pinSet.contains).toList();
+    favOrder = ordered.where((id) => !pinSet.contains(id)).toList();
+    unawaited(_saveFavOrderPins());
+  }
+
+  bool isPinned(int streamId) => favPins.contains(streamId);
+
+  Future<void> setPinned(EPGChannel c, bool pinned) async {
+    final ordered = _orderedFavoriteIds();
+    ordered.remove(c.streamId);
+    if (pinned) {
+      if (!favPins.contains(c.streamId)) favPins.add(c.streamId);
+      // Land at the end of the pinned block.
+      final pinCount = ordered.where(favPins.contains).length;
+      ordered.insert(pinCount, c.streamId);
+    } else {
+      favPins.remove(c.streamId);
+      ordered.insert(favPins.length, c.streamId);
+    }
+    _commitFavoriteOrder(ordered);
+    notifyListeners();
+  }
+
+  Future<void> moveFavorite(EPGChannel c, int delta) async {
+    final ordered = _orderedFavoriteIds();
+    final i = ordered.indexOf(c.streamId);
+    if (i < 0) return;
+    final j = i + delta;
+    if (j < 0 || j >= ordered.length) return;
+    ordered.removeAt(i);
+    ordered.insert(j, c.streamId);
+    _commitFavoriteOrder(ordered);
+    notifyListeners();
+  }
+
+  // MARK: Custom groups (per profile)
+
+  List<EPGChannel> groupChannels(ChannelGroup g) {
+    var list = <EPGChannel>[
+      for (final id in g.channelIds)
+        if (channelById(id) != null) channelById(id)!,
+    ];
+    if (kidsMode) {
+      list = list.where((c) => c.tags.contains('KIDS')).toList();
+    }
+    if (sportsMode) {
+      list = list.where((c) => c.tags.any(isSportsTag)).toList();
+    }
+    return _applyLanguage(list);
+  }
+
+  Future<void> createGroup(String name) async {
+    final id = 'g${DateTime.now().millisecondsSinceEpoch}';
+    groups = [...groups, ChannelGroup(id, name)];
+    await _saveGroups();
+    notifyListeners();
+  }
+
+  Future<void> renameGroup(String id, String name) async {
+    for (final g in groups) {
+      if (g.id == id) g.name = name;
+    }
+    await _saveGroups();
+    notifyListeners();
+  }
+
+  Future<void> deleteGroup(String id) async {
+    groups = groups.where((g) => g.id != id).toList();
+    await _saveGroups();
+    notifyListeners();
+  }
+
+  ChannelGroup? groupById(String id) {
+    for (final g in groups) {
+      if (g.id == id) return g;
+    }
+    return null;
+  }
+
+  Future<void> toggleGroupMembership(String groupId, int streamId) async {
+    final g = groupById(groupId);
+    if (g == null) return;
+    if (g.channelIds.contains(streamId)) {
+      g.channelIds.remove(streamId);
+    } else {
+      g.channelIds.add(streamId);
+    }
+    await _saveGroups();
+    notifyListeners();
+  }
+
+  Future<void> removeFromGroup(String groupId, int streamId) async {
+    final g = groupById(groupId);
+    if (g == null) return;
+    g.channelIds.remove(streamId);
+    await _saveGroups();
+    notifyListeners();
+  }
+
+  // MARK: Home rails (2.0.0)
+
+  /// Channels with a sports tag and a programme live right now.
+  List<EPGChannel> liveSportsChannels() {
+    if (kidsMode) return const [];
+    var list = all
+        .where((c) => c.tags.any(isSportsTag) && c.nowProgramme() != null)
+        .toList();
+    list = _applyLanguage(list);
+    return list;
+  }
+
+  int? recentAtMs(int streamId) => _prefs?.getInt('viu_recent_at_$streamId');
+
+  /// "Jump back in": the most recently watched channel, if it was
+  /// watched within the last 3 hours.
+  EPGChannel? jumpBackChannel() {
+    final cutoff = DateTime.now()
+        .subtract(const Duration(hours: 3))
+        .millisecondsSinceEpoch;
+    for (final c in recentChannels()) {
+      final at = recentAtMs(c.streamId);
+      if (at != null && at >= cutoff) return c;
+    }
+    return null;
   }
 
   // MARK: Recently watched
@@ -163,7 +395,10 @@ class AppState extends ChangeNotifier {
       recentIds = recentIds.sublist(0, 12);
     }
     await _prefs?.setStringList(
-        'viu_recents', recentIds.map((e) => e.toString()).toList());
+        _recentsKey, recentIds.map((e) => e.toString()).toList());
+    // Jump-back-in needs to know WHEN each channel was last watched.
+    await _prefs?.setInt(
+        'viu_recent_at_$streamId', DateTime.now().millisecondsSinceEpoch);
     notifyListeners();
   }
 
@@ -191,18 +426,31 @@ class AppState extends ChangeNotifier {
     _prefs = prefs;
     token = await _secure.read(key: 'viu_token');
     username = prefs.getString('viu_username');
-    favorites = (prefs.getStringList('viu_favorites') ?? [])
-        .map(int.tryParse)
-        .whereType<int>()
-        .toSet();
+    // Profiles first — favorites/recents/groups hang off the active one.
+    final rawProfiles = prefs.getString('viu_profiles');
+    if (rawProfiles != null && rawProfiles.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawProfiles);
+        if (decoded is List && decoded.isNotEmpty) {
+          profiles = decoded
+              .whereType<Map>()
+              .map((e) => Profile.fromJson(e.cast<String, dynamic>()))
+              .toList();
+        }
+      } catch (_) {
+        // Corrupt profile store — fall back to the Main profile.
+      }
+    }
+    if (profiles.isEmpty) profiles = [Profile('main', 'Main')];
+    activeProfileId = prefs.getString('viu_active_profile') ?? 'main';
+    if (!profiles.any((p) => p.id == activeProfileId)) {
+      activeProfileId = profiles.first.id;
+    }
+    _loadProfileData();
     locked = (prefs.getStringList('viu_locked') ?? [])
         .map(int.tryParse)
         .whereType<int>()
         .toSet();
-    recentIds = (prefs.getStringList('viu_recents') ?? [])
-        .map(int.tryParse)
-        .whereType<int>()
-        .toList();
     hiddenTags = (prefs.getStringList('viu_hidden_tags') ?? []).toSet();
     tagOrder = prefs.getStringList('viu_tag_order') ?? [];
     accentIndex = prefs.getInt('viu_accent') ?? 0;
@@ -210,6 +458,9 @@ class AppState extends ChangeNotifier {
     sportsMode = prefs.getBool('viu_sports_mode') ?? false;
     kidsMode = prefs.getBool('viu_kids_mode') ?? false;
     parentalEnabled = prefs.getBool('viu_parental_enabled') ?? false;
+    extraLarge = prefs.getBool('viu_extra_large') ?? false;
+    kidsBedtimeEnabled = prefs.getBool('viu_kids_bedtime') ?? false;
+    kidsBedtimeMinutes = prefs.getInt('viu_kids_bedtime_minutes') ?? 1200;
     customPin = await _secure.read(key: 'viu_parental_pin');
     if (token != null) {
       api.token = token;
@@ -219,8 +470,94 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _loadProfileData() {
+    final p = _prefs;
+    if (p == null) return;
+    List<int> readIds(String key) => (p.getStringList(key) ?? [])
+        .map(int.tryParse)
+        .whereType<int>()
+        .toList();
+    favorites = readIds(_favKey).toSet();
+    recentIds = readIds(_recentsKey);
+    favOrder = readIds(_favOrderKey);
+    favPins = readIds(_favPinsKey);
+    groups = [];
+    final rawGroups = p.getString(_groupsKey);
+    if (rawGroups != null && rawGroups.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawGroups);
+        if (decoded is List) {
+          groups = decoded
+              .whereType<Map>()
+              .map((e) => ChannelGroup.fromJson(e.cast<String, dynamic>()))
+              .toList();
+        }
+      } catch (_) {
+        groups = [];
+      }
+    }
+  }
+
+  Future<void> _saveProfiles() async => _prefs?.setString(
+      'viu_profiles', jsonEncode(profiles.map((p) => p.toJson()).toList()));
+
+  Future<void> switchProfile(String id) async {
+    if (id == activeProfileId) return;
+    if (!profiles.any((p) => p.id == id)) return;
+    activeProfileId = id;
+    await _prefs?.setString('viu_active_profile', id);
+    _loadProfileData();
+    notifyListeners();
+  }
+
+  Future<void> addProfile(String name) async {
+    final id = 'p${DateTime.now().millisecondsSinceEpoch}';
+    profiles = [...profiles, Profile(id, name)];
+    await _saveProfiles();
+    notifyListeners();
+  }
+
+  Future<void> renameProfile(String id, String name) async {
+    for (final p in profiles) {
+      if (p.id == id) p.name = name;
+    }
+    await _saveProfiles();
+    notifyListeners();
+  }
+
+  Future<void> deleteProfile(String id) async {
+    if (profiles.length <= 1) return; // never delete the last profile
+    profiles = profiles.where((p) => p.id != id).toList();
+    await _saveProfiles();
+    final p = _prefs;
+    if (p != null) {
+      await p.remove(id == 'main' ? 'viu_favorites' : 'viu_favorites_$id');
+      await p.remove(id == 'main' ? 'viu_recents' : 'viu_recents_$id');
+      await p.remove('viu_groups_$id');
+      await p.remove('viu_fav_order_$id');
+      await p.remove('viu_fav_pins_$id');
+    }
+    if (activeProfileId == id) {
+      activeProfileId = profiles.first.id;
+      await _prefs?.setString('viu_active_profile', activeProfileId);
+      _loadProfileData();
+    }
+    notifyListeners();
+  }
+
   Future<void> _saveFavorites() async => _prefs?.setStringList(
-      'viu_favorites', favorites.map((e) => e.toString()).toList());
+      _favKey, favorites.map((e) => e.toString()).toList());
+  Future<void> _saveFavOrderPins() async {
+    final p = _prefs;
+    if (p == null) return;
+    await p.setStringList(
+        _favOrderKey, favOrder.map((e) => e.toString()).toList());
+    await p.setStringList(
+        _favPinsKey, favPins.map((e) => e.toString()).toList());
+  }
+
+  Future<void> _saveGroups() async => _prefs?.setString(
+      _groupsKey, jsonEncode(groups.map((g) => g.toJson()).toList()));
   Future<void> _saveLocked() async => _prefs?.setStringList(
       'viu_locked', locked.map((e) => e.toString()).toList());
   Future<void> _saveSettings() async {
@@ -233,7 +570,41 @@ class AppState extends ChangeNotifier {
     await p.setBool('viu_sports_mode', sportsMode);
     await p.setBool('viu_kids_mode', kidsMode);
     await p.setBool('viu_parental_enabled', parentalEnabled);
+    await p.setBool('viu_extra_large', extraLarge);
+    await p.setBool('viu_kids_bedtime', kidsBedtimeEnabled);
+    await p.setInt('viu_kids_bedtime_minutes', kidsBedtimeMinutes);
   }
+
+  Future<void> setExtraLarge(bool v) async {
+    extraLarge = v;
+    await _saveSettings();
+    notifyListeners();
+  }
+
+  Future<void> setKidsBedtimeEnabled(bool v) async {
+    kidsBedtimeEnabled = v;
+    await _saveSettings();
+    notifyListeners();
+  }
+
+  Future<void> setKidsBedtimeMinutes(int v) async {
+    kidsBedtimeMinutes = v;
+    await _saveSettings();
+    notifyListeners();
+  }
+
+  /// Kids bedtime lock: Kids Mode on + bedtime enabled + the clock is
+  /// at/after bedtime or before 06:00.
+  bool get bedtimeActive {
+    if (!kidsMode || !kidsBedtimeEnabled) return false;
+    final now = DateTime.now();
+    final mins = now.hour * 60 + now.minute;
+    return mins >= kidsBedtimeMinutes || mins < 360;
+  }
+
+  /// Called on a timer by the shells so the bedtime lock engages (and
+  /// releases at 06:00) without any user input.
+  void tickBedtime() => notifyListeners();
 
   Future<void> login(String user, String password) async {
     final tok = await api.authenticate(user, password);
@@ -288,14 +659,19 @@ class AppState extends ChangeNotifier {
               if (seen.add(c.streamId)) c
         ];
       }
-      // Favorites: add-only two-way sync with the website list.
-      final serverFavs =
-          (byTag['FAVORITES'] ?? []).map((c) => c.streamId).toSet();
-      final localOnly = favorites.difference(serverFavs);
-      favorites = {...favorites, ...serverFavs};
-      await _saveFavorites();
-      for (final id in localOnly) {
-        unawaited(api.saveFavorite(id));
+      // Favorites: add-only two-way sync with the website list. Only
+      // the Main profile talks to the server list — other profiles are
+      // purely local, so their favorites never leak into the account
+      // list (or get the account list merged into them).
+      if (activeProfileId == 'main') {
+        final serverFavs =
+            (byTag['FAVORITES'] ?? []).map((c) => c.streamId).toSet();
+        final localOnly = favorites.difference(serverFavs);
+        favorites = {...favorites, ...serverFavs};
+        await _saveFavorites();
+        for (final id in localOnly) {
+          unawaited(api.saveFavorite(id));
+        }
       }
     } on SessionExpired {
       await signOut();
@@ -335,6 +711,7 @@ class AppState extends ChangeNotifier {
   /// The live-links response reports the server-side favorite flag;
   /// merge it locally without pushing anything back.
   Future<void> mergeFavoriteFromServer(int streamId) async {
+    if (activeProfileId != 'main') return; // server list = Main profile
     if (favorites.add(streamId)) {
       await _saveFavorites();
       notifyListeners();
@@ -342,22 +719,33 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> toggleFavorite(EPGChannel c) async {
+    final syncServer = activeProfileId == 'main';
     if (favorites.contains(c.streamId)) {
       favorites.remove(c.streamId);
-      unawaited(api.removeFavorite(c.streamId));
+      favOrder.remove(c.streamId);
+      favPins.remove(c.streamId);
+      await _saveFavOrderPins();
+      if (syncServer) unawaited(api.removeFavorite(c.streamId));
     } else {
       favorites.add(c.streamId);
-      unawaited(api.saveFavorite(c.streamId));
+      if (!favOrder.contains(c.streamId)) favOrder.add(c.streamId);
+      await _saveFavOrderPins();
+      if (syncServer) unawaited(api.saveFavorite(c.streamId));
     }
     await _saveFavorites();
     notifyListeners();
   }
 
   Future<void> clearFavorites() async {
-    for (final id in favorites.toList()) {
-      unawaited(api.removeFavorite(id));
+    if (activeProfileId == 'main') {
+      for (final id in favorites.toList()) {
+        unawaited(api.removeFavorite(id));
+      }
     }
     favorites = {};
+    favOrder = [];
+    favPins = [];
+    await _saveFavOrderPins();
     await _saveFavorites();
     notifyListeners();
   }
@@ -542,6 +930,15 @@ class ViuTvApp extends StatelessWidget {
               ),
             ),
           ),
+          builder: (context, child) {
+            final content = child ?? const SizedBox.shrink();
+            if (!appState.extraLarge) return content;
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(textScaler: TextScaler.linear(1.3)),
+              child: content,
+            );
+          },
           home: const RootGate(),
         );
       },
@@ -579,6 +976,7 @@ class RootGate extends StatelessWidget {
           );
         }
         if (appState.nonVip) return const VipGateScreen();
+        if (appState.bedtimeActive) return const BedtimeLockScreen();
         return const HomeShell();
       },
     );
@@ -795,6 +1193,75 @@ class VipGateScreen extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Kids bedtime lock (2.0.0)
+// ---------------------------------------------------------------------------
+
+class BedtimeLockScreen extends StatefulWidget {
+  const BedtimeLockScreen({super.key});
+  @override
+  State<BedtimeLockScreen> createState() => _BedtimeLockScreenState();
+}
+
+class _BedtimeLockScreenState extends State<BedtimeLockScreen> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    // Re-check the clock so the lock releases itself at 06:00.
+    _ticker = Timer.periodic(
+        const Duration(seconds: 30), (_) => appState.tickBedtime());
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _exitKids() async {
+    if (await _verifyPin(context, 'Enter PIN to exit Kids Mode')) {
+      await appState.setKidsMode(false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.bedtime_rounded,
+                size: 84, color: theme.colorScheme.primary),
+            const SizedBox(height: 24),
+            Text('Bedtime',
+                style: theme.textTheme.displaySmall
+                    ?.copyWith(color: Colors.white)),
+            const SizedBox(height: 12),
+            Text(
+              'Kids Mode is resting until 6:00 AM.\n'
+              'Bedtime started at ${fmtMinutesOfDay(appState.kidsBedtimeMinutes)}.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(color: Colors.white70),
+            ),
+            const SizedBox(height: 36),
+            FilledButton(
+              autofocus: true,
+              onPressed: _exitKids,
+              child: const Text('Exit Kids Mode (PIN)'),
+            ),
+          ],
         ),
       ),
     );
@@ -1023,6 +1490,345 @@ Future<void> playChannel(
 }
 
 // ---------------------------------------------------------------------------
+// Text entry page (profile / group names) — same D-pad handling as the
+// login form: the field swallows Up/Down, so the moves are done at the
+// hardware-keyboard level.
+// ---------------------------------------------------------------------------
+
+class TextEntryPage extends StatefulWidget {
+  final String title;
+  final String hint;
+  final String initial;
+  final String saveLabel;
+  const TextEntryPage({
+    super.key,
+    required this.title,
+    this.hint = '',
+    this.initial = '',
+    this.saveLabel = 'Save',
+  });
+
+  @override
+  State<TextEntryPage> createState() => _TextEntryPageState();
+}
+
+class _TextEntryPageState extends State<TextEntryPage> {
+  late final TextEditingController _controller;
+  final _fieldFocus = FocusNode();
+  final _saveFocus = FocusNode();
+  final _cancelFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initial);
+    HardwareKeyboard.instance.addHandler(_keys);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_keys);
+    _controller.dispose();
+    _fieldFocus.dispose();
+    _saveFocus.dispose();
+    _cancelFocus.dispose();
+    super.dispose();
+  }
+
+  bool _keys(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown && _fieldFocus.hasFocus) {
+      _saveFocus.requestFocus();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.arrowUp && _saveFocus.hasFocus) {
+      _fieldFocus.requestFocus();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.arrowRight && _saveFocus.hasFocus) {
+      _cancelFocus.requestFocus();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft && _cancelFocus.hasFocus) {
+      _saveFocus.requestFocus();
+      return true;
+    }
+    if ((key == LogicalKeyboardKey.select ||
+            key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter) &&
+        _fieldFocus.hasFocus) {
+      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    }
+    return false;
+  }
+
+  void _save() {
+    final v = _controller.text.trim();
+    Navigator.of(context).pop(v.isEmpty ? null : v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: Center(
+        child: SizedBox(
+          width: 560,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(widget.title, style: theme.textTheme.headlineMedium),
+              const SizedBox(height: 24),
+              TextField(
+                controller: _controller,
+                focusNode: _fieldFocus,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _save(),
+                decoration: InputDecoration(
+                  hintText: widget.hint,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton(
+                      focusNode: _saveFocus,
+                      onPressed: _save,
+                      child: Text(widget.saveLabel),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: OutlinedButton(
+                      focusNode: _cancelFocus,
+                      onPressed: () => Navigator.of(context).pop(null),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<String?> askText(BuildContext context, String title,
+    {String hint = '', String initial = '', String saveLabel = 'Save'}) {
+  return Navigator.of(context).push<String>(MaterialPageRoute(
+    builder: (_) => TextEntryPage(
+        title: title, hint: hint, initial: initial, saveLabel: saveLabel),
+    fullscreenDialog: true,
+  ));
+}
+
+// ---------------------------------------------------------------------------
+// Channel menu (2.0.0) — Menu key or long-press on any channel card.
+// Pops with 'play' when the user picks Play; every other action is
+// applied in place before popping.
+// ---------------------------------------------------------------------------
+
+class ChannelMenuPage extends StatelessWidget {
+  final EPGChannel channel;
+  final String? groupId;
+  const ChannelMenuPage({super.key, required this.channel, this.groupId});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) {
+          final fav = appState.isFavorite(channel);
+          final pinned = appState.isPinned(channel.streamId);
+          final group =
+              groupId != null ? appState.groupById(groupId!) : null;
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(36, 36, 36, 32),
+            children: [
+              Row(
+                children: [
+                  if (channel.streamIcon != null)
+                    SizedBox(
+                      width: 72,
+                      height: 72,
+                      child: Image.network(
+                        channel.streamIcon!,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(channel.name,
+                            style: theme.textTheme.headlineMedium),
+                        Text(channel.nowText(),
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(color: Colors.white60)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              _SettingRow(
+                title: 'Play',
+                autofocus: true,
+                trailing: const Icon(Icons.play_arrow_rounded),
+                onTap: () => Navigator.of(context).pop('play'),
+              ),
+              _SettingRow(
+                title: fav ? 'Remove from Favorites' : 'Add to Favorites',
+                trailing: Icon(fav ? Icons.favorite : Icons.favorite_border,
+                    color: fav ? theme.colorScheme.primary : null),
+                onTap: () async {
+                  await appState.toggleFavorite(channel);
+                  if (context.mounted) Navigator.of(context).pop();
+                },
+              ),
+              if (fav) ...[
+                _SettingRow(
+                  title: pinned ? 'Unpin Favorite' : 'Pin Favorite',
+                  subtitle: 'Pinned favorites stay at the front',
+                  trailing:
+                      Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined),
+                  onTap: () async {
+                    await appState.setPinned(channel, !pinned);
+                    if (context.mounted) Navigator.of(context).pop();
+                  },
+                ),
+                _SettingRow(
+                  title: 'Move Up',
+                  subtitle: 'Earlier in the Favorites order',
+                  trailing: const Icon(Icons.arrow_upward_rounded),
+                  onTap: () async {
+                    await appState.moveFavorite(channel, -1);
+                    if (context.mounted) Navigator.of(context).pop();
+                  },
+                ),
+                _SettingRow(
+                  title: 'Move Down',
+                  subtitle: 'Later in the Favorites order',
+                  trailing: const Icon(Icons.arrow_downward_rounded),
+                  onTap: () async {
+                    await appState.moveFavorite(channel, 1);
+                    if (context.mounted) Navigator.of(context).pop();
+                  },
+                ),
+              ],
+              _SettingRow(
+                title: 'Add to Group…',
+                subtitle: 'Custom channel groups',
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => GroupPickerPage(channel: channel))),
+              ),
+              if (group != null)
+                _SettingRow(
+                  title: 'Remove from ${group.name}',
+                  trailing: const Icon(Icons.remove_circle_outline),
+                  onTap: () async {
+                    await appState.removeFromGroup(group.id, channel.streamId);
+                    if (context.mounted) Navigator.of(context).pop();
+                  },
+                ),
+              _SettingRow(
+                title: 'Back',
+                onTap: () => Navigator.of(context).pop(),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Toggle-list of the profile's groups for one channel, plus
+/// "New group…" (creates the group and adds the channel).
+class GroupPickerPage extends StatelessWidget {
+  final EPGChannel channel;
+  const GroupPickerPage({super.key, required this.channel});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) {
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(36, 36, 36, 32),
+            children: [
+              Text('Groups for ${channel.name}',
+                  style: theme.textTheme.headlineMedium),
+              const SizedBox(height: 16),
+              if (appState.groups.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
+                  child: Text('No groups yet — create one below.',
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(color: Colors.white60)),
+                ),
+              for (final g in appState.groups)
+                _SettingRow(
+                  title: g.name,
+                  subtitle: '${g.channelIds.length} channels',
+                  trailing: g.channelIds.contains(channel.streamId)
+                      ? Icon(Icons.check, color: theme.colorScheme.primary)
+                      : null,
+                  onTap: () =>
+                      appState.toggleGroupMembership(g.id, channel.streamId),
+                ),
+              _SettingRow(
+                title: 'New Group…',
+                trailing: const Icon(Icons.add),
+                onTap: () async {
+                  final name = await askText(context, 'New group name',
+                      hint: 'e.g. Match Days', saveLabel: 'Create');
+                  if (name == null) return;
+                  await appState.createGroup(name);
+                  final created = appState.groups.lastWhere(
+                      (g) => g.name == name,
+                      orElse: () => appState.groups.last);
+                  await appState.toggleGroupMembership(
+                      created.id, channel.streamId);
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Opens the channel menu; plays the channel if the user picked Play.
+Future<void> openChannelMenu(BuildContext context, EPGChannel channel,
+    List<EPGChannel> contextList,
+    {String? groupId}) async {
+  final action = await Navigator.of(context).push<String>(MaterialPageRoute(
+    builder: (_) => ChannelMenuPage(channel: channel, groupId: groupId),
+    fullscreenDialog: true,
+  ));
+  if (action == 'play' && context.mounted) {
+    await playChannel(context, channel, contextList);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Home shell: collapsible rail + pages
 // ---------------------------------------------------------------------------
 
@@ -1039,19 +1845,26 @@ class _HomeShellState extends State<HomeShell> {
   static const _railItems = [
     (Icons.home_rounded, 'Home'),
     (Icons.favorite_rounded, 'Favorites'),
+    (Icons.list_alt_rounded, 'Guide'),
     (Icons.search_rounded, 'Search'),
     (Icons.settings_rounded, 'Settings'),
   ];
+
+  Timer? _bedtimeTicker;
 
   @override
   void initState() {
     super.initState();
     appState.intentRequest.addListener(_maybeHandleIntent);
+    // Watch the clock so the Kids bedtime lock engages on time.
+    _bedtimeTicker = Timer.periodic(
+        const Duration(seconds: 30), (_) => appState.tickBedtime());
   }
 
   @override
   void dispose() {
     appState.intentRequest.removeListener(_maybeHandleIntent);
+    _bedtimeTicker?.cancel();
     super.dispose();
   }
 
@@ -1115,6 +1928,7 @@ class _HomeShellState extends State<HomeShell> {
                   children: const [
                     ChannelsHomePage(),
                     FavoritesPage(),
+                    GuidePage(),
                     SearchPage(),
                     SettingsPage(),
                   ],
@@ -1191,12 +2005,17 @@ class TvChannelCard extends StatefulWidget {
   final List<EPGChannel> contextList;
   final bool autofocus;
   final FocusNode? focusNode;
+
+  /// Set when the card sits in a custom-group row — the channel menu
+  /// then offers "Remove from <group>".
+  final String? groupId;
   const TvChannelCard({
     super.key,
     required this.channel,
     required this.contextList,
     this.autofocus = false,
     this.focusNode,
+    this.groupId,
   });
 
   @override
@@ -1205,15 +2024,63 @@ class TvChannelCard extends StatefulWidget {
 
 class _TvChannelCardState extends State<TvChannelCard> {
   bool _focused = false;
+  Timer? _pressTimer;
+  bool _longPressFired = false;
+
+  @override
+  void dispose() {
+    _pressTimer?.cancel();
+    super.dispose();
+  }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
-    if (event is KeyDownEvent &&
-        (event.logicalKey == LogicalKeyboardKey.contextMenu ||
-            event.logicalKey == LogicalKeyboardKey.keyF)) {
+    final key = event.logicalKey;
+    final isSelect = key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space;
+    // Long-press OK opens the channel menu: arm a timer on key-down,
+    // and if it fired, swallow the key-up so the card's tap (playback)
+    // doesn't also trigger.
+    if (event is KeyDownEvent && isSelect) {
+      _longPressFired = false;
+      _pressTimer?.cancel();
+      _pressTimer = Timer(const Duration(milliseconds: 600), () {
+        if (!mounted) return;
+        _longPressFired = true;
+        unawaited(openChannelMenu(context, widget.channel, widget.contextList,
+            groupId: widget.groupId));
+      });
+      return KeyEventResult.ignored;
+    }
+    if (event is KeyUpEvent) {
+      _pressTimer?.cancel();
+      if (isSelect && _longPressFired) {
+        _longPressFired = false;
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (key == LogicalKeyboardKey.contextMenu) {
+      unawaited(openChannelMenu(context, widget.channel, widget.contextList,
+          groupId: widget.groupId));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyF) {
       appState.toggleFavorite(widget.channel);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  String _nowLine(EPGChannel c) {
+    final p = c.nowProgramme();
+    if (p != null && p.name != '—') {
+      if (p.timeEnd != null) return '${p.name} · ends ${fmtTime(p.timeEnd!)}';
+      return p.name;
+    }
+    return c.nowText();
   }
 
   @override
@@ -1237,6 +2104,9 @@ class _TvChannelCardState extends State<TvChannelCard> {
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: () => playChannel(context, c, widget.contextList),
+            onLongPress: () => openChannelMenu(
+                context, c, widget.contextList,
+                groupId: widget.groupId),
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(20),
@@ -1342,7 +2212,7 @@ class _TvChannelCardState extends State<TvChannelCard> {
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                    child: Text(c.nowText(),
+                    child: Text(_nowLine(c),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall
@@ -1404,14 +2274,23 @@ class ChannelsHomePage extends StatelessWidget {
     final visible = appState.visibleTags();
     final favs = appState.favoriteChannels();
     final recents = appState.recentChannels();
-    final sections = <(String, List<EPGChannel>)>[
-      if (recents.isNotEmpty) ('Recently Watched', recents),
-      if (favs.isNotEmpty) ('Favorites', favs),
+    final sportsLive = appState.liveSportsChannels();
+    final jumpBack = appState.jumpBackChannel();
+    final groupSections = <(String, List<EPGChannel>, String?)>[
+      for (final g in appState.groups)
+        (g.name, appState.groupChannels(g), g.id),
+    ];
+    final sections = <(String, List<EPGChannel>, String?)>[
+      if (sportsLive.isNotEmpty) ('Live Sports Now', sportsLive, null),
+      if (recents.isNotEmpty) ('Recently Watched', recents, null),
+      if (favs.isNotEmpty) ('Favorites', favs, null),
+      for (final s in groupSections)
+        if (s.$2.isNotEmpty) s,
       for (final t in visible)
         if (appState.channelsFor(t).isNotEmpty)
-          (t.displayName, appState.channelsFor(t)),
+          (t.displayName, appState.channelsFor(t), null),
     ];
-    if (sections.isEmpty) {
+    if (sections.isEmpty && jumpBack == null) {
       return Center(
         child: Text(
           'No channels to show.\nCheck Modes and category visibility in Settings.',
@@ -1420,39 +2299,149 @@ class ChannelsHomePage extends StatelessWidget {
         ),
       );
     }
-    return ListView.builder(
+    final rowHeight = appState.extraLarge ? 256.0 : 218.0;
+    return ListView(
       padding: const EdgeInsets.fromLTRB(36, 28, 12, 28),
-      itemCount: sections.length,
-      itemBuilder: (context, s) {
-        final (title, channels) = sections[s];
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: theme.textTheme.headlineSmall),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 218,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: channels.length,
-                  itemBuilder: (context, i) => Padding(
-                    padding: const EdgeInsets.only(right: 18),
-                    child: SizedBox(
-                      width: 264,
-                      child: TvChannelCard(
-                        channel: channels[i],
-                        contextList: channels,
+      children: [
+        if (jumpBack != null) _JumpBackCard(channel: jumpBack),
+        for (final (title, channels, groupId) in sections)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: theme.textTheme.headlineSmall),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: rowHeight,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: channels.length,
+                    itemBuilder: (context, i) => Padding(
+                      padding: const EdgeInsets.only(right: 18),
+                      child: SizedBox(
+                        width: 264,
+                        child: TvChannelCard(
+                          channel: channels[i],
+                          contextList: channels,
+                          groupId: groupId,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        );
-      },
+      ],
+    );
+  }
+}
+
+/// "Jump back in" banner (2.0.0): the channel you were watching
+/// earlier, with what's on now and how much of it is left.
+class _JumpBackCard extends StatefulWidget {
+  final EPGChannel channel;
+  const _JumpBackCard({required this.channel});
+
+  @override
+  State<_JumpBackCard> createState() => _JumpBackCardState();
+}
+
+class _JumpBackCardState extends State<_JumpBackCard> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = widget.channel;
+    final now = c.nowProgramme();
+    final minsLeft = now?.timeEnd != null
+        ? now!.timeEnd!.difference(DateTime.now()).inMinutes
+        : null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 22),
+      child: Focus(
+        onFocusChange: (f) => setState(() => _focused = f),
+        child: AnimatedScale(
+          scale: _focused ? 1.02 : 1.0,
+          duration: const Duration(milliseconds: 140),
+          child: Material(
+            color: theme.colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(20),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () =>
+                  playChannel(context, c, appState.recentChannels()),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: _focused
+                        ? theme.colorScheme.primary
+                        : Colors.transparent,
+                    width: 3,
+                  ),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 30,
+                      backgroundColor: theme.colorScheme.primary,
+                      child: const Icon(Icons.play_arrow_rounded,
+                          color: Colors.white, size: 34),
+                    ),
+                    const SizedBox(width: 22),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('JUMP BACK IN',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.4,
+                                  color: theme.colorScheme.primary)),
+                          const SizedBox(height: 4),
+                          Text(c.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.headlineSmall?.copyWith(
+                                  color:
+                                      theme.colorScheme.onPrimaryContainer)),
+                          if (now != null)
+                            Text(
+                              '${now.name}'
+                              '${minsLeft != null && minsLeft >= 0 ? ' · $minsLeft min left' : ''}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                  color: theme.colorScheme.onPrimaryContainer
+                                      .withValues(alpha: 0.75)),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (c.streamIcon != null)
+                      SizedBox(
+                        width: 96,
+                        height: 64,
+                        child: Image.network(
+                          c.streamIcon!,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) =>
+                              const SizedBox.shrink(),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1469,7 +2458,7 @@ class FavoritesPage extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(48),
           child: Text(
-            'No favorites yet.\nFocus a channel and press the Menu key (or F) to favorite it.',
+            'No favorites yet.\nFocus a channel and press F — or open the channel menu with the Menu key — to favorite it.',
             textAlign: TextAlign.center,
             style: theme.textTheme.titleLarge?.copyWith(color: Colors.white60),
           ),
@@ -1607,6 +2596,332 @@ class _SearchPageState extends State<SearchPage> {
                 ),
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Guide (2.0.0): per-channel programme strips for the next ~6 hours.
+// The TV form of the timeline grid — D-pad right walks a channel's
+// programmes, up/down moves between channels.
+// ---------------------------------------------------------------------------
+
+class GuidePage extends StatelessWidget {
+  const GuidePage({super.key});
+
+  List<EPGChannel> _channels() {
+    var list = appState.all;
+    if (appState.kidsMode) {
+      list = list.where((c) => c.tags.contains('KIDS')).toList();
+    }
+    if (appState.sportsMode) {
+      list = list.where((c) => c.tags.any(isSportsTag)).toList();
+    }
+    if (appState.languageFilter.isNotEmpty) {
+      list =
+          list.where((c) => c.language.code == appState.languageFilter).toList();
+    }
+    return list.take(100).toList();
+  }
+
+  List<EPGProgramme> _window(EPGChannel c) {
+    final now = DateTime.now();
+    final end = now.add(const Duration(hours: 6));
+    final list = c.schedule
+        .where((p) =>
+            p.timeStart != null &&
+            p.timeEnd != null &&
+            p.timeEnd!.isAfter(now) &&
+            p.timeStart!.isBefore(end))
+        .toList();
+    list.sort((a, b) => a.timeStart!.compareTo(b.timeStart!));
+    return list;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (appState.epgLoading && appState.all.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final channels = _channels();
+    if (channels.isEmpty) {
+      return Center(
+        child: Text('No channels to show in the guide.',
+            style: theme.textTheme.titleMedium
+                ?.copyWith(color: Colors.white60)),
+      );
+    }
+    final now = DateTime.now();
+    final windowEnd = now.add(const Duration(hours: 6));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(36, 28, 36, 4),
+          child: Text('Guide', style: theme.textTheme.headlineMedium),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(36, 0, 36, 12),
+          child: Text(
+            'Now → ${fmtTime(windowEnd)} · OK on a programme for details',
+            style:
+                theme.textTheme.titleMedium?.copyWith(color: Colors.white60),
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(36, 0, 12, 28),
+            itemCount: channels.length,
+            itemBuilder: (context, ci) {
+              final c = channels[ci];
+              final programmes = _window(c);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 208,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(c.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium),
+                          Text(c.nowText(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall
+                                  ?.copyWith(color: Colors.white54)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: SizedBox(
+                        height: 86,
+                        child: programmes.isEmpty
+                            ? Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text('No programme info',
+                                    style: theme.textTheme.bodyMedium
+                                        ?.copyWith(color: Colors.white38)),
+                              )
+                            : ListView.builder(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: programmes.length,
+                                itemBuilder: (context, pi) {
+                                  final p = programmes[pi];
+                                  final visStart =
+                                      p.timeStart!.isBefore(now)
+                                          ? now
+                                          : p.timeStart!;
+                                  final visEnd =
+                                      p.timeEnd!.isAfter(windowEnd)
+                                          ? windowEnd
+                                          : p.timeEnd!;
+                                  final minutes =
+                                      visEnd.difference(visStart).inMinutes;
+                                  final width =
+                                      (minutes * 2.0).clamp(120.0, 460.0);
+                                  final live = p.isLiveAt(now);
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 10),
+                                    child: SizedBox(
+                                      width: width,
+                                      child: _GuideChip(
+                                        channel: c,
+                                        programme: p,
+                                        live: live,
+                                        autofocus: ci == 0 && pi == 0,
+                                        contextList: channels,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GuideChip extends StatefulWidget {
+  final EPGChannel channel;
+  final EPGProgramme programme;
+  final bool live;
+  final bool autofocus;
+  final List<EPGChannel> contextList;
+  const _GuideChip({
+    required this.channel,
+    required this.programme,
+    required this.live,
+    required this.autofocus,
+    required this.contextList,
+  });
+
+  @override
+  State<_GuideChip> createState() => _GuideChipState();
+}
+
+class _GuideChipState extends State<_GuideChip> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final p = widget.programme;
+    return Focus(
+      autofocus: widget.autofocus,
+      onFocusChange: (f) => setState(() => _focused = f),
+      child: Material(
+        color: widget.live
+            ? theme.colorScheme.primaryContainer.withValues(alpha: 0.55)
+            : theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () async {
+            final play = await Navigator.of(context).push<EPGChannel>(
+                MaterialPageRoute(
+              builder: (_) => ProgrammeDetailPage(
+                  channel: widget.channel,
+                  programme: p,
+                  contextList: widget.contextList),
+            ));
+            if (play != null && context.mounted) {
+              await playChannel(context, play, widget.contextList);
+            }
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: _focused
+                    ? theme.colorScheme.primary
+                    : (widget.live
+                        ? theme.colorScheme.primary.withValues(alpha: 0.6)
+                        : Colors.transparent),
+                width: _focused ? 3 : 1.5,
+              ),
+            ),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(fmtTime(p.timeStart!),
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: theme.colorScheme.primary)),
+                    if (widget.live) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: const Text('LIVE',
+                            style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white)),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: Text(p.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontSize: 16)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ProgrammeDetailPage extends StatelessWidget {
+  final EPGChannel channel;
+  final EPGProgramme programme;
+  final List<EPGChannel> contextList;
+  const ProgrammeDetailPage({
+    super.key,
+    required this.channel,
+    required this.programme,
+    required this.contextList,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final p = programme;
+    final live = p.isLiveAt(DateTime.now());
+    return Scaffold(
+      body: Center(
+        child: SizedBox(
+          width: 760,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(channel.name,
+                  style: theme.textTheme.titleLarge
+                      ?.copyWith(color: theme.colorScheme.primary)),
+              const SizedBox(height: 8),
+              Text(p.name, style: theme.textTheme.headlineMedium),
+              const SizedBox(height: 10),
+              Text(
+                '${p.timeStart != null ? fmtTime(p.timeStart!) : ''}'
+                '${p.timeEnd != null ? ' – ${fmtTime(p.timeEnd!)}' : ''}'
+                '${live ? ' · LIVE NOW' : ''}',
+                style: theme.textTheme.titleMedium
+                    ?.copyWith(color: Colors.white70),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                p.description.isNotEmpty
+                    ? p.description
+                    : 'No description available for this programme.',
+                style: theme.textTheme.bodyLarge
+                    ?.copyWith(color: Colors.white70),
+              ),
+              const SizedBox(height: 32),
+              FilledButton(
+                autofocus: true,
+                // Pop with the channel — the guide chip (still mounted)
+                // starts playback with a live context.
+                onPressed: () => Navigator.of(context).pop(channel),
+                child: Text('Play ${channel.name}'),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Back to Guide'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1751,6 +3066,25 @@ class SettingsPage extends StatelessWidget {
             }
           },
         ),
+        const _SectionTitle('Profiles'),
+        _SettingRow(
+          title: 'Profiles',
+          subtitle:
+              'Active: ${appState.activeProfile.name} · ${appState.profiles.length} profile${appState.profiles.length == 1 ? '' : 's'} — favorites, recents and groups are per profile',
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const ProfilesPage())),
+        ),
+        const _SectionTitle('Display'),
+        _SettingRow(
+          title: 'Extra-Large Text',
+          subtitle: appState.extraLarge
+              ? 'On — text is scaled up across the app'
+              : 'Bigger text and taller channel rows',
+          trailing: IgnorePointer(
+              child: Switch(value: appState.extraLarge, onChanged: (_) {})),
+          onTap: () => appState.setExtraLarge(!appState.extraLarge),
+        ),
         const _SectionTitle('Appearance — accent colour'),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1829,6 +3163,35 @@ class SettingsPage extends StatelessWidget {
               child: Switch(value: appState.sportsMode, onChanged: (_) {})),
           onTap: () => appState.setSportsMode(!appState.sportsMode),
         ),
+        _SettingRow(
+          title: 'Kids Bedtime',
+          subtitle: appState.kidsBedtimeEnabled
+              ? 'On — Kids Mode locks at ${fmtMinutesOfDay(appState.kidsBedtimeMinutes)} until 6:00 AM'
+              : 'Lock Kids Mode at night (PIN to exit)',
+          trailing: IgnorePointer(
+              child:
+                  Switch(value: appState.kidsBedtimeEnabled, onChanged: (_) {})),
+          onTap: () =>
+              appState.setKidsBedtimeEnabled(!appState.kidsBedtimeEnabled),
+        ),
+        if (appState.kidsBedtimeEnabled)
+          _SettingRow(
+            title: 'Bedtime',
+            subtitle: fmtMinutesOfDay(appState.kidsBedtimeMinutes),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const BedtimeTimePage())),
+          ),
+        const _SectionTitle('My Groups'),
+        _SettingRow(
+          title: 'Custom Groups',
+          subtitle: appState.groups.isEmpty
+              ? 'No groups yet — open a channel menu (Menu key) to create one'
+              : '${appState.groups.length} group${appState.groups.length == 1 ? '' : 's'} on the ${appState.activeProfile.name} profile',
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const GroupsPage())),
+        ),
         const _SectionTitle('Language'),
         _SettingRow(
           title: 'Channel Language',
@@ -1873,10 +3236,18 @@ class SettingsPage extends StatelessWidget {
           subtitle: 'Category visibility back to defaults',
           onTap: () => appState.restoreCategoryDefaults(),
         ),
+        const _SectionTitle('Help'),
+        _SettingRow(
+          title: 'Remote Shortcuts',
+          subtitle: 'Every remote key the app listens to',
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const ShortcutsHelpPage())),
+        ),
         const SizedBox(height: 24),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Text('Viu Live TV for Android TV · version 1.5.0 · Dark mode only',
+          child: Text('Viu Live TV for Android TV · version 2.0.0 · Dark mode only',
               style:
                   theme.textTheme.bodySmall?.copyWith(color: Colors.white38)),
         ),
@@ -2023,11 +3394,357 @@ class CategoryVisibilityPage extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Profiles / groups / bedtime / shortcuts pages (2.0.0)
+// ---------------------------------------------------------------------------
+
+class ProfilesPage extends StatelessWidget {
+  const ProfilesPage({super.key});
+
+  Future<bool> _confirm(BuildContext context, String title, String body) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Confirm')),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) {
+          final active = appState.activeProfile;
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 36, 32),
+            children: [
+              Text('Profiles', style: theme.textTheme.headlineMedium),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'Each profile keeps its own favorites, recents and groups on this TV. Only the Main profile syncs favorites with your Viu account.',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: Colors.white60),
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (final p in appState.profiles)
+                _SettingRow(
+                  title: p.name,
+                  subtitle: p.id == appState.activeProfileId
+                      ? 'Active profile'
+                      : 'Tap to switch to this profile',
+                  autofocus: p.id == appState.activeProfileId,
+                  trailing: p.id == appState.activeProfileId
+                      ? Icon(Icons.check, color: theme.colorScheme.primary)
+                      : null,
+                  onTap: () => appState.switchProfile(p.id),
+                ),
+              const _SectionTitle('Manage'),
+              _SettingRow(
+                title: 'Add Profile',
+                trailing: const Icon(Icons.add),
+                onTap: () async {
+                  final name = await askText(context, 'New profile name',
+                      hint: 'e.g. Kids, Guest', saveLabel: 'Add');
+                  if (name == null) return;
+                  await appState.addProfile(name);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content:
+                            Text('Profile “$name” added — tap it to switch.')));
+                  }
+                },
+              ),
+              _SettingRow(
+                title: 'Rename Active Profile',
+                subtitle: active.name,
+                onTap: () async {
+                  final name = await askText(context, 'Rename profile',
+                      initial: active.name, saveLabel: 'Rename');
+                  if (name == null) return;
+                  await appState.renameProfile(active.id, name);
+                },
+              ),
+              _SettingRow(
+                title: 'Delete Active Profile',
+                subtitle: appState.profiles.length <= 1
+                    ? 'The last profile cannot be deleted'
+                    : 'Deletes ${active.name}’s favorites, recents and groups on this TV',
+                onTap: () async {
+                  if (appState.profiles.length <= 1) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Keep at least one profile.')));
+                    return;
+                  }
+                  if (await _confirm(context, 'Delete ${active.name}?',
+                      'Its favorites, recents and groups on this TV will be removed.')) {
+                    await appState.deleteProfile(active.id);
+                  }
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class GroupsPage extends StatelessWidget {
+  const GroupsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) {
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 36, 32),
+            children: [
+              Text('Custom Groups', style: theme.textTheme.headlineMedium),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'Groups belong to the ${appState.activeProfile.name} profile and appear as rows on Home. Add channels from any channel menu (Menu key on a channel).',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: Colors.white60),
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (final g in appState.groups)
+                _SettingRow(
+                  title: g.name,
+                  subtitle: '${g.channelIds.length} channels',
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => GroupDetailPage(groupId: g.id))),
+                ),
+              _SettingRow(
+                title: 'New Group',
+                trailing: const Icon(Icons.add),
+                autofocus: appState.groups.isEmpty,
+                onTap: () async {
+                  final name = await askText(context, 'New group name',
+                      hint: 'e.g. Match Days', saveLabel: 'Create');
+                  if (name == null) return;
+                  await appState.createGroup(name);
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class GroupDetailPage extends StatelessWidget {
+  final String groupId;
+  const GroupDetailPage({super.key, required this.groupId});
+
+  Future<bool> _confirm(BuildContext context, String title, String body) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Confirm')),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) {
+          final g = appState.groupById(groupId);
+          if (g == null) {
+            return const Center(child: Text('This group no longer exists.'));
+          }
+          final channels = <EPGChannel>[
+            for (final id in g.channelIds)
+              if (appState.channelById(id) != null) appState.channelById(id)!,
+          ];
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 36, 32),
+            children: [
+              Text(g.name, style: theme.textTheme.headlineMedium),
+              const _SectionTitle('Group'),
+              _SettingRow(
+                title: 'Rename Group',
+                subtitle: g.name,
+                autofocus: true,
+                onTap: () async {
+                  final name = await askText(context, 'Rename group',
+                      initial: g.name, saveLabel: 'Rename');
+                  if (name == null) return;
+                  await appState.renameGroup(g.id, name);
+                },
+              ),
+              _SettingRow(
+                title: 'Delete Group',
+                subtitle: 'The channels themselves are not affected',
+                onTap: () async {
+                  if (await _confirm(context, 'Delete ${g.name}?',
+                      'The group row will disappear from Home.')) {
+                    await appState.deleteGroup(g.id);
+                    if (context.mounted) Navigator.of(context).pop();
+                  }
+                },
+              ),
+              const _SectionTitle('Channels'),
+              if (channels.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
+                  child: Text(
+                    'No channels yet. Focus a channel anywhere and press the Menu key, then “Add to Group…”.',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: Colors.white60),
+                  ),
+                ),
+              for (final c in channels)
+                _SettingRow(
+                  title: c.name,
+                  subtitle: 'Tap to remove from ${g.name}',
+                  trailing: const Icon(Icons.remove_circle_outline),
+                  onTap: () => appState.removeFromGroup(g.id, c.streamId),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class BedtimeTimePage extends StatelessWidget {
+  const BedtimeTimePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) {
+          final options = <int>[
+            for (var m = 17 * 60; m <= 23 * 60 + 30; m += 30) m,
+          ];
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(24, 20, 36, 32),
+            children: [
+              Text('Bedtime', style: theme.textTheme.headlineMedium),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'Kids Mode locks at this time and unlocks at 6:00 AM. Exiting early needs the parental PIN.',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: Colors.white60),
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (final m in options)
+                _SettingRow(
+                  title: fmtMinutesOfDay(m),
+                  autofocus: appState.kidsBedtimeMinutes == m,
+                  trailing: appState.kidsBedtimeMinutes == m
+                      ? Icon(Icons.check, color: theme.colorScheme.primary)
+                      : null,
+                  onTap: () => appState.setKidsBedtimeMinutes(m),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class ShortcutsHelpPage extends StatelessWidget {
+  const ShortcutsHelpPage({super.key});
+
+  static const _rows = <(String, String, String)>[
+    // (section, keys, action)
+    ('Player', 'OK / Play-Pause', 'Play or pause'),
+    ('Player', 'Up / Down', 'Previous / next channel'),
+    ('Player', 'Left / Right', 'Move between video and the player buttons'),
+    ('Player', 'Menu or F', 'Favorite / unfavorite this channel'),
+    ('Player', 'G', 'Channel guide overlay'),
+    ('Player', 'L', 'Jump to the last channel'),
+    ('Player', 'M', 'Open Multiview'),
+    ('Player', 'S', 'Sleep timer menu'),
+    ('Player', 'A', 'Audio-only on/off (black screen, sound keeps playing)'),
+    ('Player', 'T', 'Audio & subtitles menu'),
+    ('Player', 'Back', 'Close overlay or menu, then exit the player'),
+    ('Home & lists', 'Menu', 'Open the channel menu (play, favorite, pin/move favorites, groups)'),
+    ('Home & lists', 'F', 'Favorite / unfavorite the focused channel'),
+    ('Home & lists', 'Long-press OK', 'Open the channel menu (touch / mouse long-press works too)'),
+    ('Multiview', 'D-pad', 'The focused pane is the one you hear'),
+    ('Multiview', 'OK', 'Expand the focused pane to the full player'),
+    ('Multiview', 'Menu or F', 'Remove the focused pane'),
+    ('Multiview', 'Back', 'Exit Multiview'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final children = <Widget>[
+      Text('Remote Shortcuts', style: theme.textTheme.headlineMedium),
+    ];
+    String? lastSection;
+    for (final (section, keys, action) in _rows) {
+      if (section != lastSection) {
+        children.add(_SectionTitle(section));
+        lastSection = section;
+      }
+      children.add(_SettingRow(title: action, subtitle: keys));
+    }
+    return Scaffold(
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 36, 32),
+        children: children,
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Player — fullscreen, remote-first
 //
 // Remote map: D-pad centre / media Play-Pause = play/pause · Up/Down =
 // previous/next channel · Menu or F = favorite · Guide button or G =
-// channel guide overlay · Back = close overlay/guide, then exit.
+// channel guide overlay · S = sleep timer · A = audio-only ·
+// T = audio & subtitles · Back = close overlay/menu, then exit.
 // ---------------------------------------------------------------------------
 
 class PlayerScreen extends StatefulWidget {
@@ -2049,6 +3766,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final FocusNode _lastButtonFocus = FocusNode();
   final FocusNode _guideButtonFocus = FocusNode();
   final FocusNode _multiButtonFocus = FocusNode();
+  final FocusNode _sleepButtonFocus = FocusNode();
+  final FocusNode _tracksButtonFocus = FocusNode();
 
   late EPGChannel _channel;
   EPGChannel? _previous;
@@ -2064,6 +3783,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final List<String> _logTail = [];
   final List<StreamSubscription> _subs = [];
 
+  // 2.0.0 player features.
+  bool _wantPlaying = true; // false after an intentional pause
+  bool _audioOnly = false;
+  // Sleep timer.
+  int _sleepChoice = 0; // minutes; 0 = off
+  DateTime? _sleepDeadline;
+  Timer? _sleepFireTimer;
+  Timer? _sleepTicker;
+  bool _sleepEnded = false;
+  bool _sleepMenuOpen = false;
+  // Audio/subtitle track menu (snapshotted when the menu opens).
+  bool _tracksMenuOpen = false;
+  List<AudioTrack> _audioTracks = [];
+  List<SubtitleTrack> _subtitleTracks = [];
+  String? _selAudioId;
+  String? _selSubtitleId;
+  // Auto-reconnect + stream health.
+  int _reconnectAttempt = 0;
+  Timer? _reconnectTimer;
+  bool _wasBuffering = false;
+  final List<DateTime> _healthEvents = [];
+
   @override
   void initState() {
     super.initState();
@@ -2072,14 +3813,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _controller = VideoController(_player);
     _subs.add(_player.stream.playing.listen((v) {
       if (!mounted) return;
-      if (v) _watchdog?.cancel();
+      if (v) {
+        _watchdog?.cancel();
+        // Playback (re)started — the reconnect loop has done its job.
+        _reconnectTimer?.cancel();
+        _reconnectAttempt = 0;
+      }
       setState(() {
         _playing = v;
         if (v && _error != null) _error = null;
       });
     }));
     _subs.add(_player.stream.buffering.listen((v) {
-      if (mounted) setState(() => _buffering = v);
+      if (!mounted) return;
+      if (v && !_wasBuffering) _noteHealthEvent();
+      _wasBuffering = v;
+      setState(() => _buffering = v);
     }));
     _subs.add(_player.stream.error.listen((e) {
       // mpv reports transient problems on live streams (famously
@@ -2087,6 +3836,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // never fail the channel on an error event alone — the watchdog
       // in _load surfaces the last error only if playback never starts.
       _lastError = e;
+      _noteHealthEvent();
+      _maybeReconnect();
     }));
     _subs.add(_player.stream.log.listen((log) {
       _logTail.add('${log.level}/${log.prefix}: ${log.text}'.trim());
@@ -2127,6 +3878,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void dispose() {
     _hideTimer?.cancel();
     _watchdog?.cancel();
+    _sleepFireTimer?.cancel();
+    _sleepTicker?.cancel();
+    _reconnectTimer?.cancel();
     for (final s in _subs) {
       s.cancel();
     }
@@ -2137,14 +3891,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _lastButtonFocus.dispose();
     _guideButtonFocus.dispose();
     _multiButtonFocus.dispose();
+    _sleepButtonFocus.dispose();
+    _tracksButtonFocus.dispose();
     super.dispose();
   }
 
   Future<void> _load(EPGChannel channel) async {
     if (channel.streamId != _channel.streamId) {
       _previous = _channel;
+      // A new channel gets a fresh reconnect budget. (The reconnect
+      // loop itself calls _load with the SAME channel, so its counter
+      // is not reset here.)
+      _reconnectAttempt = 0;
+      _reconnectTimer?.cancel();
     }
     unawaited(appState.recordRecent(channel.streamId));
+    _wantPlaying = true;
     setState(() {
       _channel = channel;
       _loading = true;
@@ -2165,6 +3927,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         Media(url, httpHeaders: const {'User-Agent': kUserAgent}),
         play: true,
       );
+      if (_audioOnly) {
+        // open() resets track selection — re-apply audio-only.
+        try {
+          await _player.setVideoTrack(VideoTrack.no());
+        } catch (_) {}
+      }
       if (mounted) setState(() => _loading = false);
     } on SessionExpired {
       if (mounted) {
@@ -2183,11 +3951,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  bool get _anyMenuOpen => _guideOpen || _sleepMenuOpen || _tracksMenuOpen;
+
   void _showOverlay() {
     if (!_overlay && mounted) setState(() => _overlay = true);
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted && !_guideOpen) {
+      if (mounted && !_anyMenuOpen && !_sleepEnded) {
         setState(() => _overlay = false);
         _rootFocus.requestFocus();
       }
@@ -2196,10 +3966,143 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _togglePlay() {
     if (_playing) {
+      _wantPlaying = false;
       _player.pause();
     } else {
+      _wantPlaying = true;
       _player.play();
     }
+  }
+
+  // MARK: Sleep timer (2.0.0)
+
+  void _setSleepTimer(int minutes) {
+    _sleepFireTimer?.cancel();
+    _sleepTicker?.cancel();
+    setState(() {
+      _sleepChoice = minutes;
+      _sleepMenuOpen = false;
+      _sleepDeadline = minutes <= 0
+          ? null
+          : DateTime.now().add(Duration(minutes: minutes));
+    });
+    _rootFocus.requestFocus();
+    if (minutes <= 0) return;
+    _sleepFireTimer = Timer(Duration(minutes: minutes), _onSleepTimerFired);
+    _sleepTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      // Refreshes the countdown shown in the banner.
+      if (mounted && _sleepDeadline != null) setState(() {});
+    });
+  }
+
+  void _onSleepTimerFired() {
+    if (!mounted) return;
+    _sleepTicker?.cancel();
+    _wantPlaying = false;
+    _player.pause();
+    setState(() {
+      _sleepDeadline = null;
+      _sleepChoice = 0;
+      _sleepEnded = true;
+      _overlay = true;
+    });
+  }
+
+  void _dismissSleepEnded({required bool resume}) {
+    setState(() => _sleepEnded = false);
+    _rootFocus.requestFocus();
+    if (resume) {
+      _wantPlaying = true;
+      _player.play();
+    }
+  }
+
+  String get _sleepCountdownText {
+    final d = _sleepDeadline;
+    if (d == null) return '';
+    var secs = d.difference(DateTime.now()).inSeconds;
+    if (secs < 0) secs = 0;
+    final m = (secs ~/ 60).toString();
+    final s = (secs % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  // MARK: Audio & subtitle tracks (2.0.0)
+
+  void _openTracksMenu() {
+    try {
+      final tracks = _player.state.tracks;
+      _audioTracks = tracks.audio;
+      _subtitleTracks = tracks.subtitle;
+      _selAudioId = _player.state.track.audio.id;
+      _selSubtitleId = _player.state.track.subtitle.id;
+    } catch (_) {
+      _audioTracks = [];
+      _subtitleTracks = [];
+      _selAudioId = null;
+      _selSubtitleId = null;
+    }
+    setState(() => _tracksMenuOpen = true);
+  }
+
+  String _trackLabel(String? title, String? language, String fallback) {
+    if (title != null && title.isNotEmpty) return title;
+    if (language != null && language.isNotEmpty) return language;
+    return fallback;
+  }
+
+  // MARK: Audio-only (2.0.0)
+
+  Future<void> _toggleAudioOnly() async {
+    final next = !_audioOnly;
+    setState(() => _audioOnly = next);
+    try {
+      await _player.setVideoTrack(next ? VideoTrack.no() : VideoTrack.auto());
+    } catch (_) {
+      // Stream without a selectable video track — the black overlay
+      // still gives the audio-only look.
+    }
+  }
+
+  // MARK: Auto-reconnect + stream health (2.0.0)
+
+  void _noteHealthEvent() {
+    final now = DateTime.now();
+    _healthEvents.add(now);
+    _healthEvents
+        .removeWhere((t) => now.difference(t) > const Duration(minutes: 5));
+  }
+
+  Color get _healthColor {
+    final now = DateTime.now();
+    final recent = _healthEvents
+        .where((t) => now.difference(t) <= const Duration(minutes: 5))
+        .length;
+    if (recent == 0) return const Color(0xFF35C26B);
+    if (recent <= 2) return const Color(0xFFFFB020);
+    return const Color(0xFFE5323B);
+  }
+
+  /// When the stream errors while it should be playing, reopen it up
+  /// to 3 times (2s / 5s / 10s apart) before letting the existing
+  /// watchdog + error panel take over. Transient mpv errors that
+  /// recover on their own never trigger a reopen: a check timer only
+  /// reopens if playback still hasn't (re)started when it fires.
+  void _maybeReconnect() {
+    if (!mounted || !_wantPlaying || _playing || _error != null) return;
+    if (_reconnectAttempt >= 3) return;
+    if (_reconnectTimer?.isActive ?? false) return;
+    const delays = [
+      Duration(seconds: 2),
+      Duration(seconds: 5),
+      Duration(seconds: 10),
+    ];
+    _reconnectTimer = Timer(delays[_reconnectAttempt], () {
+      if (!mounted || !_wantPlaying || _playing || _error != null) return;
+      if (_reconnectAttempt >= 3) return;
+      setState(() => _reconnectAttempt++);
+      _load(_channel);
+    });
   }
 
   void _openGuide() {
@@ -2214,7 +4117,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _favButtonFocus.hasFocus ||
               _lastButtonFocus.hasFocus ||
               _guideButtonFocus.hasFocus ||
-              _multiButtonFocus.hasFocus)) {
+              _multiButtonFocus.hasFocus ||
+              _sleepButtonFocus.hasFocus ||
+              _tracksButtonFocus.hasFocus)) {
         FocusScope.of(context).nextFocus();
       }
     });
@@ -2265,20 +4170,32 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     _showOverlay();
     final key = event.logicalKey;
+    if (_sleepEnded) {
+      if (key == LogicalKeyboardKey.escape ||
+          key == LogicalKeyboardKey.goBack) {
+        _dismissSleepEnded(resume: false);
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored; // the panel button takes the rest
+    }
     if (key == LogicalKeyboardKey.mediaPlayPause ||
         key == LogicalKeyboardKey.mediaPlay ||
         key == LogicalKeyboardKey.mediaPause) {
       _togglePlay();
       return KeyEventResult.handled;
     }
-    if (_guideOpen) {
+    if (_anyMenuOpen) {
       if (key == LogicalKeyboardKey.escape ||
           key == LogicalKeyboardKey.goBack) {
-        setState(() => _guideOpen = false);
+        setState(() {
+          _guideOpen = false;
+          _sleepMenuOpen = false;
+          _tracksMenuOpen = false;
+        });
         _rootFocus.requestFocus();
         return KeyEventResult.handled;
       }
-      return KeyEventResult.ignored; // guide items take the rest
+      return KeyEventResult.ignored; // menu items take the rest
     }
     // Overlay-button focus routing (deterministic remote control — the
     // Chromecast remote has no Menu key, so Favorite and Guide must be
@@ -2290,7 +4207,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _favButtonFocus.hasFocus ||
         _lastButtonFocus.hasFocus ||
         _guideButtonFocus.hasFocus ||
-        _multiButtonFocus.hasFocus;
+        _multiButtonFocus.hasFocus ||
+        _sleepButtonFocus.hasFocus ||
+        _tracksButtonFocus.hasFocus;
     if (onButton) {
       if (key == LogicalKeyboardKey.arrowUp) {
         _rootFocus.requestFocus();
@@ -2306,11 +4225,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _guideButtonFocus.requestFocus();
         } else if (_guideButtonFocus.hasFocus) {
           _multiButtonFocus.requestFocus();
+        } else if (_multiButtonFocus.hasFocus) {
+          _sleepButtonFocus.requestFocus();
+        } else if (_sleepButtonFocus.hasFocus) {
+          _tracksButtonFocus.requestFocus();
         }
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.arrowLeft) {
-        if (_multiButtonFocus.hasFocus) {
+        if (_tracksButtonFocus.hasFocus) {
+          _sleepButtonFocus.requestFocus();
+        } else if (_sleepButtonFocus.hasFocus) {
+          _multiButtonFocus.requestFocus();
+        } else if (_multiButtonFocus.hasFocus) {
           _guideButtonFocus.requestFocus();
         } else if (_guideButtonFocus.hasFocus) {
           (_previous != null ? _lastButtonFocus : _favButtonFocus)
@@ -2351,6 +4278,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _swapToPrevious();
       return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.keyS) {
+      setState(() => _sleepMenuOpen = true);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyA) {
+      _toggleAudioOnly();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyT) {
+      _openTracksMenu();
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.select ||
         key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.space) {
@@ -2378,7 +4317,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.arrowLeft) {
-        _multiButtonFocus.requestFocus();
+        _tracksButtonFocus.requestFocus();
         return KeyEventResult.handled;
       }
     }
@@ -2392,8 +4331,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        if (_guideOpen) {
-          setState(() => _guideOpen = false);
+        if (_sleepEnded) {
+          _dismissSleepEnded(resume: false);
+        } else if (_anyMenuOpen) {
+          setState(() {
+            _guideOpen = false;
+            _sleepMenuOpen = false;
+            _tracksMenuOpen = false;
+          });
           _rootFocus.requestFocus();
         } else {
           Navigator.of(context).pop();
@@ -2413,12 +4358,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 controls: (state) => const SizedBox.shrink(),
                 fit: BoxFit.contain,
               ),
+              if (_audioOnly) _audioOnlyOverlay(theme),
               if (_loading || _buffering)
                 const Center(
                     child: CircularProgressIndicator(color: Colors.white)),
+              if (_reconnectAttempt > 0 && !_playing && _error == null)
+                Positioned(
+                  top: 36,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.78),
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Text(
+                        'Reconnecting… attempt $_reconnectAttempt of 3',
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 16),
+                      ),
+                    ),
+                  ),
+                ),
               if (_error != null) _errorPanel(theme),
               if (_overlay && _error == null) _controlsOverlay(theme),
               if (_guideOpen) _guideOverlay(theme),
+              if (_sleepMenuOpen) _sleepMenuOverlay(theme),
+              if (_tracksMenuOpen) _tracksMenuOverlay(theme),
+              if (_sleepEnded) _sleepEndedPanel(theme),
             ],
           ),
         ),
@@ -2465,7 +4435,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
           const SizedBox(height: 24),
           FilledButton(
             autofocus: true,
-            onPressed: () => _load(_channel),
+            onPressed: () {
+              _reconnectAttempt = 0;
+              _load(_channel);
+            },
             child: const Text('Try Again'),
           ),
         ],
@@ -2509,6 +4482,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           fontSize: 12,
                           fontWeight: FontWeight.w800,
                           color: Colors.white)),
+                ),
+                const SizedBox(width: 10),
+                // Stream health: green = clean, amber/red = stalls or
+                // errors in the last 5 minutes.
+                Container(
+                  width: 11,
+                  height: 11,
+                  decoration: BoxDecoration(
+                      color: _healthColor, shape: BoxShape.circle),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -2576,6 +4558,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   icon: Icons.grid_view_rounded,
                   label: 'Multiview',
                   onTap: _openMultiview,
+                ),
+                const SizedBox(width: 14),
+                _OverlayButton(
+                  focusNode: _sleepButtonFocus,
+                  icon: Icons.bedtime_outlined,
+                  label: _sleepDeadline != null
+                      ? 'Sleep $_sleepCountdownText'
+                      : 'Sleep',
+                  onTap: () => setState(() => _sleepMenuOpen = true),
+                ),
+                const SizedBox(width: 14),
+                _OverlayButton(
+                  focusNode: _tracksButtonFocus,
+                  icon: Icons.subtitles_outlined,
+                  label: 'Audio/Sub',
+                  onTap: _openTracksMenu,
                 ),
                 const Spacer(),
                 const Text('↑↓ channel · ←→ buttons · Back exit',
@@ -2675,6 +4673,262 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   );
                 },
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // MARK: 2.0.0 player overlays
+
+  Widget _audioOnlyOverlay(ThemeData theme) {
+    final now = _channel.nowProgramme();
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_channel.streamIcon != null)
+              SizedBox(
+                width: 200,
+                height: 120,
+                child: Image.network(
+                  _channel.streamIcon!,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            const SizedBox(height: 16),
+            Icon(Icons.headphones_rounded,
+                color: theme.colorScheme.primary, size: 40),
+            const SizedBox(height: 12),
+            Text(_channel.name,
+                style: theme.textTheme.headlineSmall
+                    ?.copyWith(color: Colors.white)),
+            if (now != null) ...[
+              const SizedBox(height: 6),
+              Text(now.name,
+                  style: const TextStyle(color: Colors.white70, fontSize: 17)),
+            ],
+            const SizedBox(height: 10),
+            const Text('Audio only — press A to bring the picture back',
+                style: TextStyle(color: Colors.white38, fontSize: 14)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sidePanelShell(ThemeData theme, String title, List<Widget> rows) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        width: 480,
+        color: Colors.black.withValues(alpha: 0.88),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 36, 24, 12),
+              child: Text(title,
+                  style: theme.textTheme.headlineSmall
+                      ?.copyWith(color: Colors.white)),
+            ),
+            Expanded(child: ListView(children: rows)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _menuRow({
+    required String title,
+    String? subtitle,
+    bool selected = false,
+    bool autofocus = false,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        autofocus: autofocus,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(
+                color: selected
+                    ? Theme.of(context).colorScheme.primary
+                    : Colors.transparent,
+                width: 4,
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight:
+                                selected ? FontWeight.w700 : FontWeight.w400)),
+                    if (subtitle != null)
+                      Text(subtitle,
+                          style: const TextStyle(
+                              color: Colors.white54, fontSize: 14)),
+                  ],
+                ),
+              ),
+              if (selected)
+                Icon(Icons.check,
+                    size: 20, color: Theme.of(context).colorScheme.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sleepMenuOverlay(ThemeData theme) {
+    const options = <(int, String)>[
+      (0, 'Off'),
+      (15, '15 minutes'),
+      (30, '30 minutes'),
+      (60, '60 minutes'),
+      (90, '90 minutes'),
+    ];
+    return _sidePanelShell(theme, 'Sleep Timer', [
+      for (final (mins, label) in options)
+        _menuRow(
+          title: label,
+          subtitle: mins == _sleepChoice && _sleepDeadline != null
+              ? '$_sleepCountdownText left'
+              : null,
+          selected: _sleepChoice == mins,
+          autofocus: _sleepChoice == mins,
+          onTap: () => _setSleepTimer(mins),
+        ),
+    ]);
+  }
+
+  Widget _tracksMenuOverlay(ThemeData theme) {
+    final rows = <Widget>[];
+    if (_audioTracks.isEmpty && _subtitleTracks.isEmpty) {
+      rows.add(_menuRow(
+        title: 'No alternate tracks on this stream',
+        autofocus: true,
+        onTap: () => setState(() => _tracksMenuOpen = false),
+      ));
+    }
+    if (_audioTracks.isNotEmpty) {
+      rows.add(const Padding(
+        padding: EdgeInsets.fromLTRB(24, 8, 24, 4),
+        child: Text('AUDIO',
+            style: TextStyle(
+                color: Colors.white54,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.2)),
+      ));
+      for (var i = 0; i < _audioTracks.length; i++) {
+        final t = _audioTracks[i];
+        rows.add(_menuRow(
+          title: _trackLabel(t.title, t.language, 'Audio ${i + 1}'),
+          selected: t.id == _selAudioId,
+          autofocus: rows.length == 1,
+          onTap: () async {
+            try {
+              await _player.setAudioTrack(t);
+            } catch (_) {}
+            if (mounted) {
+              setState(() {
+                _selAudioId = t.id;
+                _tracksMenuOpen = false;
+              });
+              _rootFocus.requestFocus();
+            }
+          },
+        ));
+      }
+    }
+    if (_subtitleTracks.isNotEmpty) {
+      rows.add(const Padding(
+        padding: EdgeInsets.fromLTRB(24, 16, 24, 4),
+        child: Text('SUBTITLES',
+            style: TextStyle(
+                color: Colors.white54,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.2)),
+      ));
+      rows.add(_menuRow(
+        title: 'Off',
+        selected: _selSubtitleId == null || _selSubtitleId == 'no',
+        autofocus: _audioTracks.isEmpty,
+        onTap: () async {
+          try {
+            await _player.setSubtitleTrack(SubtitleTrack.no());
+          } catch (_) {}
+          if (mounted) {
+            setState(() {
+              _selSubtitleId = 'no';
+              _tracksMenuOpen = false;
+            });
+            _rootFocus.requestFocus();
+          }
+        },
+      ));
+      for (var i = 0; i < _subtitleTracks.length; i++) {
+        final t = _subtitleTracks[i];
+        rows.add(_menuRow(
+          title: _trackLabel(t.title, t.language, 'Subtitle ${i + 1}'),
+          selected: t.id == _selSubtitleId,
+          onTap: () async {
+            try {
+              await _player.setSubtitleTrack(t);
+            } catch (_) {}
+            if (mounted) {
+              setState(() {
+                _selSubtitleId = t.id;
+                _tracksMenuOpen = false;
+              });
+              _rootFocus.requestFocus();
+            }
+          },
+        ));
+      }
+    }
+    return _sidePanelShell(theme, 'Audio & Subtitles', rows);
+  }
+
+  Widget _sleepEndedPanel(ThemeData theme) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.72),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.bedtime_rounded,
+                color: theme.colorScheme.primary, size: 64),
+            const SizedBox(height: 18),
+            Text('Sleep timer ended',
+                style: theme.textTheme.headlineSmall
+                    ?.copyWith(color: Colors.white)),
+            const SizedBox(height: 8),
+            Text('${_channel.name} is paused.',
+                style: const TextStyle(color: Colors.white70, fontSize: 17)),
+            const SizedBox(height: 28),
+            FilledButton(
+              autofocus: true,
+              onPressed: () => _dismissSleepEnded(resume: true),
+              child: const Text('Keep Watching'),
             ),
           ],
         ),
