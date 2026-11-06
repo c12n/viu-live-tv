@@ -307,13 +307,7 @@ struct ChannelListView: View {
 
             Section {
                 if visibleChannels.isEmpty {
-                    ContentUnavailableView(
-                        tab == .favorites ? "No Favorites Yet" : "No Channels",
-                        systemImage: tab == .favorites ? "heart" : "tv",
-                        description: Text(tab == .favorites
-                            ? "Tap the heart on any channel to add it here."
-                            : "Try refreshing or adjusting your search.")
-                    )
+                    emptyStateView
                 } else {
                     ForEach(visibleChannels) { channel in
                         row(for: channel)
@@ -398,6 +392,18 @@ struct ChannelListView: View {
                 self.selectedCategory = nil
             }
         }
+    }
+
+    // MARK: Empty state (2.0.0 — extracted so the List body type-checks fast)
+
+    private var emptyStateView: some View {
+        let isFavorites = (tab == .favorites)
+        let title = isFavorites ? "No Favorites Yet" : "No Channels"
+        let icon = isFavorites ? "heart" : "tv"
+        let message = isFavorites
+            ? "Tap the heart on any channel to add it here."
+            : "Try refreshing or adjusting your search."
+        return ContentUnavailableView(title, systemImage: icon, description: Text(message))
     }
 
     // MARK: Top inset (iPad picker + category chips)
