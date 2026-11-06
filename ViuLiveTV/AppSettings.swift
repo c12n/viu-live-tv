@@ -146,7 +146,7 @@ final class SleepTimer {
         guard minutes > 0 else { return }
         let fireDate = Date().addingTimeInterval(TimeInterval(minutes * 60))
         endDate = fireDate
-        let t = Timer(fireAt: fireDate, interval: 0, repeats: false) { [weak self] _ in
+        let t = Timer(fire: fireDate, interval: 0, repeats: false) { [weak self] _ in
             self?.endDate = nil
             NotificationCenter.default.post(name: Self.firedNotification, object: nil)
         }
