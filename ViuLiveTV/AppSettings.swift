@@ -271,18 +271,20 @@ final class AppSettings {
         recentChannelIDs        = d.array(forKey: Keys.recents) as? [Int] ?? []
         reminderIDs             = Set(d.array(forKey: Keys.reminders) as? [String] ?? [])
         extraLargeMode          = d.bool(forKey: Keys.extraLarge)
+        let loadedProfiles: [ViewerProfile]
         if let data = d.data(forKey: Keys.profiles),
            let decoded = try? JSONDecoder().decode([ViewerProfile].self, from: data),
            !decoded.isEmpty {
-            profiles = decoded
+            loadedProfiles = decoded
         } else {
-            profiles = [ViewerProfile(id: Self.mainProfileID, name: "Main", symbol: "person.fill")]
+            loadedProfiles = [ViewerProfile(id: Self.mainProfileID, name: "Main", symbol: "person.fill")]
         }
+        profiles = loadedProfiles
         if let raw = d.string(forKey: Keys.activeProfile), let uuid = UUID(uuidString: raw),
-           profiles.contains(where: { $0.id == uuid }) {
+           loadedProfiles.contains(where: { $0.id == uuid }) {
             activeProfileID = uuid
         } else {
-            activeProfileID = profiles[0].id
+            activeProfileID = loadedProfiles[0].id
         }
         if let data = d.data(forKey: Keys.groups),
            let decoded = try? JSONDecoder().decode([CustomGroup].self, from: data) {
